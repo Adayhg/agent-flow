@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "build:webview": "vite build --config vite.config.webview.ts"
+    "build:webview": "vite build --config vite.config.webview.ts",
+    "test": "node --import tsx --test \"hooks/**/*.test.ts\" \"lib/**/*.test.ts\""
   },
   "dependencies": {
     "d3-force": "^3.0.0",

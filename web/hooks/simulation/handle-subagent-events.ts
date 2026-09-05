@@ -2,14 +2,21 @@ import { COLORS } from '@/lib/colors'
 import type { MutableEventState } from './process-event'
 import { edgeId, asString, LABEL_LEN_SHORT } from './types'
 
+/** Codex supplies stable relation ids; Claude events only have display names. */
+function relationId(payload: Record<string, unknown>, idField: string, nameField: string): string {
+  return typeof payload[idField] === 'string' && payload[idField]
+    ? payload[idField] as string
+    : asString(payload[nameField])
+}
+
 export function handleSubagentDispatch(
   payload: Record<string, unknown>,
   currentTime: number,
   state: MutableEventState,
 ): void {
-  const parentName = asString(payload.parent)
-  const childName = asString(payload.child)
-  const eid = edgeId(parentName, childName)
+  const parentId = relationId(payload, 'parentId', 'parent')
+  const childId = relationId(payload, 'childId', 'child')
+  const eid = edgeId(parentId, childId)
   const task = asString(payload.task)
 
   state.particles.push({
@@ -26,9 +33,9 @@ export function handleSubagentReturn(
   currentTime: number,
   state: MutableEventState,
 ): void {
-  const parentName = asString(payload.parent)
-  const childName = asString(payload.child)
-  const eid = edgeId(parentName, childName)
+  const parentId = relationId(payload, 'parentId', 'parent')
+  const childId = relationId(payload, 'childId', 'child')
+  const eid = edgeId(parentId, childId)
   const summary = asString(payload.summary)
 
   state.particles.push({

@@ -273,4 +273,213 @@ describe('CodexRolloutParser', () => {
     assert.ok(Number.isFinite(state.contextBreakdown.userMessages))
     assert.ok(Number.isFinite(state.contextBreakdown.toolResults))
   })
+
+  it('emits one stable child identity from the modern spawn_agent result', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    parser.processLine(JSON.stringify({ type: 'session_meta', payload: { id: 'root-thread' } }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: 'spawn-1',
+        arguments: JSON.stringify({ task_name: 'researcher', model: 'future-codex-model', message: 'redacted task prompt' }),
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output', call_id: 'spawn-1',
+        output: JSON.stringify({ agent_id: 'child-thread-1', nickname: 'researcher' }),
+      },
+    }), state)
+    // Replayed output must not create a second child. A second call with the
+    // same stable identity is deliberately tolerated.
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: 'spawn-2',
+        arguments: JSON.stringify({ task_name: 'researcher', message: 'another prompt' }),
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output', call_id: 'spawn-2',
+        output: JSON.stringify({ agent_id: 'child-thread-1', nickname: 'researcher' }),
+      },
+    }), state)
+
+    const spawns = events.filter(e => e.type === 'agent_spawn' && e.payload.name === 'researcher')
+    assert.equal(spawns.length, 1)
+    assert.equal(spawns[0].payload.id, 'child-thread-1')
+    assert.equal(spawns[0].payload.parentId, 'root-thread')
+    assert.equal(spawns[0].payload.task, 'researcher')
+    assert.equal(spawns[0].payload.model, 'future-codex-model')
+    assert.equal(events.filter(e => e.type === 'subagent_dispatch').length, 1)
+    assert.equal(JSON.stringify(events).includes('redacted task prompt'), false)
+  })
+
+  it('uses an opaque-id-derived name rather than task_name when spawn output has no nickname', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: 'spawn-no-nickname',
+        arguments: JSON.stringify({ task_name: 'private task title', message: 'private task prompt' }),
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output', call_id: 'spawn-no-nickname',
+        output: JSON.stringify({ agent_id: 'child-thread-without-nickname' }),
+      },
+    }), state)
+
+    const spawn = events.find(event => event.type === 'agent_spawn' && event.payload.id === 'child-thread-without-nickname')
+    assert.ok(spawn)
+    assert.equal(spawn!.payload.name, 'Codex agent child-th')
+    assert.equal(JSON.stringify(spawn).includes('private task title'), false)
+    assert.equal(JSON.stringify(events).includes('private task prompt'), false)
+  })
+
+  it('fails closed for a legacy task_name-only spawn result', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: 'spawn-legacy',
+        arguments: JSON.stringify({ task_name: 'legacy-child', message: 'private prompt' }),
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'spawn-legacy', output: JSON.stringify({ task_name: 'legacy-child' }) },
+    }), state)
+    assert.equal(events.some(e => e.type === 'agent_spawn' && e.payload.name === 'legacy-child'), false)
+    assert.equal(events.some(e => e.type === 'subagent_dispatch'), false)
+    assert.equal(JSON.stringify(events).includes('private prompt'), false)
+  })
+
+  it('does not create a relation for an unknown followup or wait target', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    for (const [name, callId, args, output] of [
+      ['followup_task', 'unknown-followup', { target: 'missing-child', message: 'private' }, ''],
+      ['wait_agent', 'unknown-wait', { targets: ['missing-child'], timeout_ms: 1 }, JSON.stringify({ status: 'completed' })],
+    ] as const) {
+      parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+        type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args),
+      } }), state)
+      parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+        type: 'function_call_output', call_id: callId, output,
+      } }), state)
+    }
+    assert.equal(events.some(e => e.type === 'subagent_dispatch'), false)
+    assert.equal(events.some(e => e.type === 'subagent_return'), false)
+  })
+
+  it('treats duplicate nicknames as ambiguous for nominal relations', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    for (const [callId, id] of [['spawn-a', 'child-a'], ['spawn-b', 'child-b']] as const) {
+      parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: callId,
+        arguments: JSON.stringify({ task_name: 'same-name', message: 'private' }),
+      } }), state)
+      parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+        type: 'function_call_output', call_id: callId,
+        output: JSON.stringify({ agent_id: id, nickname: 'same-name' }),
+      } }), state)
+    }
+    const dispatchesAfterSpawn = events.filter(e => e.type === 'subagent_dispatch').length
+    parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+      type: 'function_call', name: 'followup_task', call_id: 'ambiguous-followup',
+      arguments: JSON.stringify({ target: 'same-name', message: 'private' }),
+    } }), state)
+    parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+      type: 'function_call_output', call_id: 'ambiguous-followup', output: '',
+    } }), state)
+    parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+      type: 'function_call', name: 'wait_agent', call_id: 'ambiguous-wait',
+      arguments: JSON.stringify({ targets: ['same-name'], timeout_ms: 1 }),
+    } }), state)
+    parser.processLine(JSON.stringify({ type: 'response_item', payload: {
+      type: 'function_call_output', call_id: 'ambiguous-wait', output: '',
+    } }), state)
+    assert.equal(dispatchesAfterSpawn, 2)
+    assert.equal(events.filter(e => e.type === 'subagent_dispatch').length, dispatchesAfterSpawn)
+    assert.equal(events.some(e => e.type === 'subagent_return'), false)
+  })
+
+  it('fails closed when spawn success has no reliable identity', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: 'spawn-unknown',
+        arguments: JSON.stringify({ message: 'do not use this as identity' }),
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'spawn-unknown', output: 'accepted' },
+    }), state)
+    assert.equal(events.some(e => e.type === 'agent_spawn' && e.payload.name !== 'orchestrator'), false)
+    assert.equal(events.some(e => e.type === 'subagent_dispatch'), false)
+  })
+
+  it('uses rollout thread metadata for nested principal and direct-child hierarchy', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+    parser.processLine(JSON.stringify({
+      type: 'session_meta',
+      payload: { id: 'child-thread', parent_thread_id: 'root-thread' },
+    }), state)
+    const placeholder = events.find(e => e.type === 'agent_spawn' && e.payload.id === 'root-thread')
+    assert.ok(placeholder)
+    assert.equal(placeholder!.payload.isMain, true)
+    assert.equal(placeholder!.payload.placeholder, true)
+    const principal = events.find(e => e.type === 'agent_spawn' && e.payload.id === 'child-thread')
+    assert.ok(principal)
+    assert.equal(principal!.payload.id, 'child-thread')
+    assert.equal(principal!.payload.parentId, 'root-thread')
+    assert.equal(principal!.payload.isMain, false)
+
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call', name: 'spawn_agent', call_id: 'grandchild-call',
+        arguments: JSON.stringify({ task_name: 'grandchild', message: 'nested private prompt' }),
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output', call_id: 'grandchild-call',
+        output: JSON.stringify({ agent_id: 'grandchild-thread', nickname: 'grandchild' }),
+      },
+    }), state)
+
+    const grandchild = events.find(e => e.type === 'agent_spawn' && e.payload.name === 'grandchild')
+    assert.ok(grandchild)
+    assert.equal(grandchild!.payload.id, 'grandchild-thread')
+    assert.equal(grandchild!.payload.parentId, 'child-thread')
+    const dispatch = events.find(e => e.type === 'subagent_dispatch' && e.payload.child === 'grandchild')
+    assert.ok(dispatch)
+    assert.equal(dispatch!.payload.parentId, 'child-thread')
+    const principalEvents = events.filter(e => e.type === 'tool_call_start' || e.type === 'tool_call_end' || e.type === 'context_update')
+    for (const event of principalEvents) assert.equal(event.payload.agent, 'child-thread')
+    assert.equal(JSON.stringify(events).includes('nested private prompt'), false)
+  })
 })

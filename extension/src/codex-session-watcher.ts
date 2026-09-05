@@ -23,6 +23,7 @@ import { readNewFileLines } from './fs-utils'
 import { createLogger } from './logger'
 import {
   CodexRolloutParser, CodexRolloutState, createCodexRolloutState,
+  type CodexRolloutPrincipal,
 } from './codex-rollout-parser'
 import type { AgentSessionWatcher, SessionLifecycleEvent } from './session-runtime'
 import { TypedEventEmitter } from './typed-event-emitter'
@@ -39,6 +40,10 @@ const SESSION_ID_FROM_FILENAME = /rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([
 
 interface WatchedCodexSession {
   sessionId: string
+  /** Stable root id shared by every rollout in one Codex thread family. */
+  groupSessionId: string
+  agentName: string
+  isMain: boolean
   filePath: string
   fileWatcher: fs.FSWatcher | null
   pollTimer: NodeJS.Timeout | null
@@ -54,6 +59,66 @@ interface WatchedCodexSession {
   label: string
   rolloutState: CodexRolloutState
   parser: CodexRolloutParser
+}
+
+/** Metadata available in the first session_meta record. Kept separately from
+ * live tail state so discovery can resolve a whole parent graph before parsing
+ * any rollout content. */
+interface CodexSessionMetadata {
+  sessionId: string
+  parentThreadId: string | null
+  cwd: string | null
+  filePath: string
+  stat: fs.Stats
+}
+
+/** Minimal metadata needed to resolve a Codex rollout family. Exported so
+ * callers and tests can validate grouping without starting filesystem watches. */
+export interface CodexThreadMetadata {
+  sessionId: string
+  parentThreadId: string | null
+}
+
+/**
+ * Resolve every rollout id to one stable family/root id using only explicit
+ * parent_thread_id metadata. A known parent with no rollout is retained as the
+ * conservative root; malformed cycles use their lowest observed id so every
+ * member still lands in one deterministic family.
+ */
+export function resolveCodexThreadGroups(
+  records: Iterable<CodexThreadMetadata>,
+): Map<string, string> {
+  const byId = new Map<string, CodexThreadMetadata>()
+  for (const record of records) byId.set(record.sessionId, record)
+
+  const rootFor = (sessionId: string): string => {
+    const chain: string[] = []
+    let current = sessionId
+    while (true) {
+      const cycleAt = chain.indexOf(current)
+      if (cycleAt >= 0) return chain.slice(cycleAt).sort()[0]
+      chain.push(current)
+      const metadata = byId.get(current)
+      if (!metadata?.parentThreadId) return current
+      const parentId = metadata.parentThreadId
+      if (!byId.has(parentId)) return parentId
+      current = parentId
+    }
+  }
+
+  const groups = new Map<string, string>()
+  for (const id of byId.keys()) groups.set(id, rootFor(id))
+  return groups
+}
+
+/** One visual session, which may be backed by several rollout files. */
+interface CodexSessionGroup {
+  sessionId: string
+  label: string
+  lifecycleEnded: boolean
+  completionEmitted: boolean
+  /** agent_spawn is idempotent at the group boundary, including placeholders. */
+  emittedAgentIds: Set<string>
 }
 
 function codexHome(): string {
@@ -87,7 +152,15 @@ function recentSessionDirs(now: Date): string[] {
   return Array.from(seen)
 }
 
-/** Read the first line of a rollout file to extract cwd from session_meta.
+function safeMetadataId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized && normalized.length <= 256 && !/[\r\n]/.test(normalized)
+    ? normalized
+    : null
+}
+
+/** Read the first line of a rollout file to extract session_meta metadata.
  *
  *  UTF-8 safety: `\n` is 0x0a, which never appears as a continuation byte in
  *  a multi-byte UTF-8 sequence (continuation bytes are 0x80–0xBF), so slicing
@@ -98,7 +171,7 @@ function recentSessionDirs(now: Date): string[] {
  *  it far larger — keep reading in chunks until the first newline, up to a
  *  1MB cap. Past the cap we give up: JSON.parse fails on the truncated object
  *  and we return null rather than emit a corrupted cwd. */
-function readSessionCwd(filePath: string): string | null {
+function readSessionMetadata(filePath: string, fallbackSessionId: string): Pick<CodexSessionMetadata, 'sessionId' | 'parentThreadId' | 'cwd'> | null {
   const CHUNK_SIZE = 65536
   const MAX_FIRST_LINE = 1048576
   try {
@@ -121,9 +194,17 @@ function readSessionCwd(filePath: string): string | null {
       }
       const data = Buffer.concat(chunks)
       const line = data.subarray(0, end >= 0 ? end : data.length).toString('utf-8')
-      const parsed = JSON.parse(line) as { type?: string; payload?: { cwd?: string } }
-      if (parsed.type !== 'session_meta') return null
-      return typeof parsed.payload?.cwd === 'string' ? parsed.payload.cwd : null
+       const parsed = JSON.parse(line) as {
+         type?: string
+         payload?: { id?: unknown; session_id?: unknown; parent_thread_id?: unknown; cwd?: unknown }
+       }
+       if (parsed.type !== 'session_meta') return null
+       const payload = parsed.payload
+       return {
+         sessionId: safeMetadataId(payload?.id) || safeMetadataId(payload?.session_id) || fallbackSessionId,
+         parentThreadId: safeMetadataId(payload?.parent_thread_id),
+         cwd: typeof payload?.cwd === 'string' ? payload.cwd : null,
+       }
     } finally { fs.closeSync(fd) }
   } catch { return null }
 }
@@ -133,6 +214,10 @@ function readSessionCwd(filePath: string): string | null {
 export class CodexSessionWatcher implements AgentSessionWatcher {
   private dirWatchers = new Map<string, fs.FSWatcher>()
   private sessions = new Map<string, WatchedCodexSession>()
+  /** All eligible rollout metadata seen during this watcher's lifetime. */
+  private sessionMetadata = new Map<string, CodexSessionMetadata>()
+  /** Visual sessions keyed by their resolved root thread id. */
+  private groups = new Map<string, CodexSessionGroup>()
   private workspacePath: string | null = null
   private scanInterval: NodeJS.Timeout | null = null
   /** One-shot flag so the cwd-mismatch hint is logged at most once per process. */
@@ -159,25 +244,23 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
   }
 
   isSessionActive(sessionId: string): boolean {
+    const group = this.groups.get(sessionId)
+    if (group) return this.groupIsActive(group.sessionId)
     const s = this.sessions.get(sessionId)
     return !!s && s.sessionDetected && !s.sessionCompleted
   }
 
   getActiveSessions(): SessionInfo[] {
-    return Array.from(this.sessions.values()).map(s => ({
-      id: s.sessionId,
-      label: s.label,
-      status: s.sessionCompleted ? 'completed' : 'active',
-      startTime: s.sessionStartTime,
-      lastActivityTime: s.lastActivityTime,
-    }))
+    return Array.from(this.groups.values())
+      .map(group => this.sessionInfoForGroup(group))
+      .filter((info): info is SessionInfo => info !== null)
   }
 
   replaySessionStart(sessionIds?: string[]): void {
-    for (const [id, session] of this.sessions) {
-      if (!session.sessionDetected) continue
-      if (sessionIds && !sessionIds.includes(id)) continue
-      this._onSessionLifecycle.fire({ type: 'started', sessionId: id, label: session.label })
+    for (const group of this.groups.values()) {
+      if (!this.groupHasDetectedSession(group.sessionId)) continue
+      if (sessionIds && !sessionIds.includes(group.sessionId)) continue
+      this._onSessionLifecycle.fire({ type: 'started', sessionId: group.sessionId, label: group.label })
     }
   }
 
@@ -205,6 +288,7 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
   private scanForSessions(): void {
     const now = new Date()
     let skippedByCwd = 0
+    const candidates = new Map<string, CodexSessionMetadata>()
     for (const dir of recentSessionDirs(now)) {
       if (!fs.existsSync(dir)) continue
 
@@ -217,13 +301,12 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
       }
 
       let entries: string[]
-      try { entries = fs.readdirSync(dir) }
+      try { entries = fs.readdirSync(dir).sort() }
       catch { continue }
 
       for (const name of entries) {
         if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue
         const filePath = path.join(dir, name)
-        if (this.sessions.has(this.sessionIdFor(filePath))) continue
 
         // Recency filter — skip stale files
         let stat: fs.Stats
@@ -232,9 +315,12 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
         const ageS = (Date.now() - stat.mtimeMs) / 1000
         if (ageS > ACTIVE_SESSION_AGE_S) continue
 
+        const metadata = readSessionMetadata(filePath, this.sessionIdFor(filePath))
+        if (!metadata) continue
+
         // Workspace filter — only attach if cwd matches (or no workspace set)
         if (this.workspacePath) {
-          const cwd = readSessionCwd(filePath)
+          const cwd = metadata.cwd
           if (cwd === null) continue
           const resolvedCwd = this.resolvePath(cwd)
           if (!resolvedCwd || !this.pathMatchesWorkspace(resolvedCwd)) {
@@ -243,8 +329,37 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
           }
         }
 
-        this.attachSession(filePath, stat)
+        const discovered: CodexSessionMetadata = { ...metadata, filePath, stat }
+        this.sessionMetadata.set(discovered.sessionId, discovered)
+        if (!this.sessions.has(discovered.sessionId)) candidates.set(discovered.sessionId, discovered)
       }
+    }
+
+    // Discovery is intentionally two-phase. A child file can sort before its
+    // root (or a grandchild before its parent); resolve every observed parent
+    // edge before attaching a parser so all events share the same group id.
+    const groupIds = resolveCodexThreadGroups(this.sessionMetadata.values())
+    const depthFor = (metadata: CodexSessionMetadata): number => {
+      let depth = 0
+      let current = metadata
+      const seen = new Set<string>()
+      while (current.parentThreadId && !seen.has(current.sessionId)) {
+        seen.add(current.sessionId)
+        depth++
+        const parent = this.sessionMetadata.get(current.parentThreadId)
+        if (!parent) break
+        current = parent
+      }
+      return depth
+    }
+    const ordered = Array.from(candidates.values()).sort((a, b) => {
+      const groupOrder = (groupIds.get(a.sessionId) || a.sessionId).localeCompare(groupIds.get(b.sessionId) || b.sessionId)
+      if (groupOrder !== 0) return groupOrder
+      const depthOrder = depthFor(a) - depthFor(b)
+      return depthOrder !== 0 ? depthOrder : a.sessionId.localeCompare(b.sessionId)
+    })
+    for (const metadata of ordered) {
+      this.attachSession(metadata, groupIds.get(metadata.sessionId) || metadata.sessionId)
     }
 
     // Recent Codex activity exists but none of it belongs to this workspace —
@@ -280,28 +395,111 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
     return candidate.startsWith(workspace + path.sep)
   }
 
-  private attachSession(filePath: string, stat: fs.Stats): void {
-    const sessionId = this.sessionIdFor(filePath)
+  private ensureGroup(groupSessionId: string): CodexSessionGroup {
+    let group = this.groups.get(groupSessionId)
+    if (!group) {
+      group = {
+        sessionId: groupSessionId,
+        label: `Codex ${groupSessionId.slice(0, SESSION_ID_DISPLAY)}`,
+        lifecycleEnded: false,
+        completionEmitted: false,
+        emittedAgentIds: new Set(),
+      }
+      this.groups.set(groupSessionId, group)
+    }
+    return group
+  }
+
+  private sessionsInGroup(groupSessionId: string): WatchedCodexSession[] {
+    return Array.from(this.sessions.values()).filter(session => session.groupSessionId === groupSessionId)
+  }
+
+  private groupIsActive(groupSessionId: string): boolean {
+    return this.sessionsInGroup(groupSessionId).some(session => session.sessionDetected && !session.sessionCompleted)
+  }
+
+  private groupHasDetectedSession(groupSessionId: string): boolean {
+    return this.sessionsInGroup(groupSessionId).some(session => session.sessionDetected)
+  }
+
+  private sessionInfoForGroup(group: CodexSessionGroup): SessionInfo | null {
+    const sessions = this.sessionsInGroup(group.sessionId)
+    if (sessions.length === 0) return null
+    return {
+      id: group.sessionId,
+      label: group.label,
+      status: this.groupIsActive(group.sessionId) ? 'active' : 'completed',
+      startTime: Math.min(...sessions.map(session => session.sessionStartTime)),
+      lastActivityTime: Math.max(...sessions.map(session => session.lastActivityTime)),
+    }
+  }
+
+  /** Re-emit a rollout event against its family id. Stable agent_spawn ids are
+   * deduplicated here because Codex can describe the same child both in its
+   * parent's spawn result and in the child's own rollout. */
+  private emitForGroup(session: WatchedCodexSession, event: AgentEvent): void {
+    if (event.type === 'agent_spawn') {
+      const id = typeof event.payload.id === 'string' ? event.payload.id : null
+      if (id) {
+        const group = this.ensureGroup(session.groupSessionId)
+        if (group.emittedAgentIds.has(id)) return
+        group.emittedAgentIds.add(id)
+      }
+    }
+    this._onEvent.fire({ ...event, sessionId: session.groupSessionId })
+  }
+
+  private principalFor(metadata: CodexSessionMetadata, groupSessionId: string): CodexRolloutPrincipal {
+    const rootMetadata = this.sessionMetadata.get(groupSessionId)
+    const rootHasRollout = !!rootMetadata && rootMetadata.parentThreadId === null
+    const isMain = metadata.sessionId === groupSessionId && rootHasRollout
+    return {
+      id: metadata.sessionId,
+      name: isMain ? ORCHESTRATOR_NAME : `Codex agent ${metadata.sessionId.slice(0, SESSION_ID_DISPLAY)}`,
+      isMain,
+      ...(metadata.parentThreadId ? { parentId: metadata.parentThreadId } : {}),
+      ...(!rootHasRollout ? {
+        rootPlaceholder: { id: groupSessionId, name: ORCHESTRATOR_NAME },
+      } : {}),
+    }
+  }
+
+  private attachSession(metadata: CodexSessionMetadata, groupSessionId: string): void {
+    const { sessionId, filePath, stat } = metadata
+    const group = this.ensureGroup(groupSessionId)
+    const principal = this.principalFor(metadata, groupSessionId)
     const label = `Codex ${sessionId.slice(0, SESSION_ID_DISPLAY)}`
+    const wasGroupActive = this.groupIsActive(groupSessionId)
 
     // Build the parser once per session so the delegate closures capture the
     // right session reference and re-emission is stateless on this side.
     const parser = new CodexRolloutParser({
-      emit: (event) => this._onEvent.fire({ ...event, sessionId }),
+      emit: (event) => {
+        const s = this.sessions.get(sessionId)
+        if (s) this.emitForGroup(s, event)
+      },
       elapsed: () => {
         const s = this.sessions.get(sessionId)
         return s ? (Date.now() - s.sessionStartTime) / 1000 : 0
       },
       setLabel: (newLabel) => {
         const s = this.sessions.get(sessionId)
-        if (!s || !s.label.startsWith('Codex ')) return // only replace auto-label
+        // A user message is useful as a title only for a real root rollout.
+        // Never derive the synthetic parent's name/title from a child prompt.
+        if (!s || !s.isMain || !s.label.startsWith('Codex ')) return
         s.label = newLabel
-        this._onSessionLifecycle.fire({ type: 'updated', sessionId, label: newLabel })
+        const currentGroup = this.ensureGroup(s.groupSessionId)
+        currentGroup.label = newLabel
+        this._onSessionLifecycle.fire({ type: 'updated', sessionId: s.groupSessionId, label: newLabel })
       },
+      principal,
     })
 
     const session: WatchedCodexSession = {
       sessionId,
+      groupSessionId,
+      agentName: principal.name,
+      isMain: principal.isMain,
       filePath,
       fileWatcher: null,
       pollTimer: null,
@@ -322,8 +520,12 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
     this.readNewLines(sessionId)
 
     session.sessionDetected = true
-    this._onSessionDetected.fire(sessionId)
-    this._onSessionLifecycle.fire({ type: 'started', sessionId, label })
+    if (!wasGroupActive) {
+      group.lifecycleEnded = false
+      group.completionEmitted = false
+      this._onSessionDetected.fire(groupSessionId)
+      this._onSessionLifecycle.fire({ type: 'started', sessionId: groupSessionId, label: group.label })
+    }
 
     try {
       session.fileWatcher = fs.watch(filePath, () => this.readNewLines(sessionId))
@@ -333,7 +535,7 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
     session.pollTimer = setInterval(() => this.readNewLines(sessionId), POLL_FALLBACK_MS)
 
     this.resetInactivityTimer(sessionId)
-    log.info(`Attached to session ${sessionId.slice(0, SESSION_ID_DISPLAY)} at ${filePath}`)
+    log.info(`Attached to rollout ${sessionId.slice(0, SESSION_ID_DISPLAY)} in group ${groupSessionId.slice(0, SESSION_ID_DISPLAY)} at ${filePath}`)
   }
 
   private readNewLines(sessionId: string): void {
@@ -346,11 +548,17 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
     session.fileTail = result.tail
     session.lastActivityTime = Date.now()
 
+    const wasGroupActive = this.groupIsActive(session.groupSessionId)
     // Re-activate if the session had been marked complete on inactivity —
     // new content means the user resumed the Codex CLI.
     if (session.sessionCompleted) {
       session.sessionCompleted = false
-      this._onSessionLifecycle.fire({ type: 'started', sessionId, label: session.label })
+      if (!wasGroupActive) {
+        const group = this.ensureGroup(session.groupSessionId)
+        group.lifecycleEnded = false
+        group.completionEmitted = false
+        this._onSessionLifecycle.fire({ type: 'started', sessionId: session.groupSessionId, label: group.label })
+      }
       log.info(`Session ${sessionId.slice(0, SESSION_ID_DISPLAY)} re-activated after idle`)
     }
 
@@ -369,13 +577,31 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
     session.inactivityTimer = setTimeout(() => {
       if (session.sessionCompleted) return
       session.sessionCompleted = true
-      this._onEvent.fire({
-        time: (Date.now() - session.sessionStartTime) / 1000,
-        type: 'agent_complete',
-        payload: { name: ORCHESTRATOR_NAME, sessionEnd: true },
-        sessionId,
-      })
-      this._onSessionLifecycle.fire({ type: 'ended', sessionId, label: session.label })
+      // Child rollouts complete independently. A real root remains alive until
+      // the whole family is idle, otherwise the UI would complete active
+      // descendants when its own rollout pauses first.
+      if (!session.isMain) {
+        this.emitForGroup(session, {
+          time: (Date.now() - session.sessionStartTime) / 1000,
+          type: 'agent_complete',
+          payload: { id: session.sessionId, name: session.agentName },
+        })
+      }
+      if (!this.groupIsActive(session.groupSessionId)) {
+        const group = this.ensureGroup(session.groupSessionId)
+        if (!group.completionEmitted) {
+          group.completionEmitted = true
+          this.emitForGroup(session, {
+            time: (Date.now() - session.sessionStartTime) / 1000,
+            type: 'agent_complete',
+            payload: { id: session.groupSessionId, name: ORCHESTRATOR_NAME, sessionEnd: true },
+          })
+        }
+        if (!group.lifecycleEnded) {
+          group.lifecycleEnded = true
+          this._onSessionLifecycle.fire({ type: 'ended', sessionId: session.groupSessionId, label: group.label })
+        }
+      }
     }, INACTIVITY_TIMEOUT_MS)
   }
 
@@ -389,6 +615,8 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
       if (s.inactivityTimer) clearTimeout(s.inactivityTimer)
     }
     this.sessions.clear()
+    this.sessionMetadata.clear()
+    this.groups.clear()
     this._onEvent.dispose()
     this._onSessionDetected.dispose()
     this._onSessionLifecycle.dispose()

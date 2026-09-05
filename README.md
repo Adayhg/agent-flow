@@ -25,6 +25,29 @@ Claude Code is powerful, but its execution is a black box — you see the final 
 - **Interactive canvas**: Pan, zoom, click agents and tool calls to inspect details
 - **Timeline & transcript panels**: Review the full execution timeline, file attention heatmap, and message transcript
 - **JSONL log file support**: Point at any JSONL event log to replay or watch agent activity
+- **Office mode (MVP)**: The visualizer opens in a privacy-scoped office view by default; the existing Graph view remains available as a reversible toggle
+
+## Office mode (MVP)
+
+Office is a read-only projection of the event stream already consumed by Agent
+Flow. It places observed agents into evidence-backed work zones and shows
+parent/child relationships only when a corresponding spawn or dispatch event
+exists. It does not create a second source of truth or persist layout state.
+
+The projection discovers new Claude Code and Codex agents as events arrive.
+Agent identities are deterministic and session-scoped, so equal names in
+different sessions remain distinct and nested agents can be represented. Terra
+and Luna receive their named avatar families; other and future model IDs are
+kept as reported without a hard-coded model catalogue.
+
+Office intentionally exposes only bounded names, model IDs, states, zones, and
+relationship evidence. Prompts, transcript text, file paths, and tool
+arguments are not passed to the Office view. The implementation is local and
+read-only: it does not write to `.codex`.
+
+For the local/demo workflow, use the commands below and open the displayed
+localhost URL. Office is the initial view; select **Graph** to return to the
+original canvas, and **Office** to switch back.
 
 ## Getting Started
 
@@ -52,6 +75,9 @@ pnpm run dev        # start the web app + event relay
 ```
 
 Open http://localhost:3000 and start a Claude Code session in another terminal — events will stream to the browser in real-time.
+
+The relay binds to localhost for the local workflow. It reads the existing
+Claude Code and Codex event sources; it does not require a hosted service.
 
 ### VS Code Extension
 
@@ -143,14 +169,23 @@ Created by [Simon Patole](https://github.com/patoles), for [CraftMyGame](https:/
 
 ## Privacy & Telemetry
 
-Agent Flow ships **opt-out** anonymous usage telemetry, enabled by default only
-in the published `npx agent-flow-app` binary. `pnpm run dev` and the VS Code
-extension emit nothing. Only aggregate events are sent — session count,
-duration, event count, OS/arch, Agent Flow version, distinct model IDs
-observed, which runtimes were watched, and error class names. Prompts, file
-paths, tool calls, user info, and environment variables are never sent.
+Telemetry is disabled by default for the Office MVP/local demo and creates no
+install ID or telemetry directory. To opt in explicitly, set:
 
-- **Turn off:** `export AGENT_FLOW_TELEMETRY=false` or `export DO_NOT_TRACK=1`
+```bash
+AGENT_FLOW_TELEMETRY=true pnpm run dev
+```
+
+In PowerShell, use `$env:AGENT_FLOW_TELEMETRY="true"` before starting the
+command. Only the explicit value `true` (case-insensitive) opts in;
+`DO_NOT_TRACK=1` always disables telemetry, even when opt-in is set.
+The same variables can be exported before using another local entry point.
+When telemetry is enabled by a published entry point, only aggregate events
+are sent; prompts, file paths, tool calls, user info, and environment variables
+are not sent. Office itself has no telemetry path and does not write `.codex`.
+
+- **Turn off:** unset `AGENT_FLOW_TELEMETRY` (the default) or use
+  `export DO_NOT_TRACK=1`
   (disabled installs write zero state to disk — no `~/.agent-flow/` directory)
 - **Inspect the payload:** `cat ~/.agent-flow/telemetry/events.jsonl`
 - **Full schema + exact fields:** see the v0.8.1 entry in
@@ -158,6 +193,17 @@ paths, tool calls, user info, and environment variables are never sent.
   in [scripts/telemetry.ts](scripts/telemetry.ts)
 - **Reset your anonymous identity:** delete `~/.agent-flow/installation-id` —
   a fresh random UUIDv4 will be generated on next run
+
+## MVP limitations and rollback
+
+Office states are derived only from events observed by the relay/parser. An
+unseen event, an interrupted session, or an unfamiliar event type can leave an
+agent as `unknown`, `stale`, or otherwise incomplete; the view does not infer
+intent or claim a complete execution history.
+
+Rollback is reversible: close the local Office/Agent Flow process and reopen
+the visualizer, then select **Graph**. No deployment or canary is implied by
+this MVP documentation.
 
 
 ## License

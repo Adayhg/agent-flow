@@ -8,7 +8,9 @@ import { syncOnce } from './telemetry/sync'
  * Hardcoded telemetry endpoint + publishable key.
  *
  * These ship inside every published binary. No env var override, no runtime
- * fallback. All enabled installs send events to Agent Flow's Supabase project.
+ * fallback. Telemetry is disabled by default; only installs that explicitly
+ * opt in with AGENT_FLOW_TELEMETRY=true send events to Agent Flow's Supabase
+ * project.
  * Forks that republish under a different name must edit these constants and
  * rebuild.
  *
@@ -31,8 +33,6 @@ export const TELEMETRY_PUBLISHABLE_KEY = 'sb_publishable_AgJ_DIUH9zm8E0yHC9KsRw_
 const FIRST_SYNC_DELAY_MS = 2 * 1000
 const SYNC_SCHEDULE_MS = [2 * 60 * 1000, 3 * 60 * 1000]
 const SYNC_REPEAT_MS = 5 * 60 * 1000
-
-const FALSY_VALUES = new Set(['false', '0', 'disabled', ''])
 
 export interface TelemetryEvent {
   event_type: 'session_start' | 'session_end' | 'error'
@@ -63,6 +63,8 @@ export interface TelemetryClientOptions {
   endpoint?: string
   /** Override the key for tests. Defaults to the hardcoded constant. */
   apiKey?: string
+  /** Override the transport for tests. Defaults to global fetch. */
+  fetch?: typeof fetch
 }
 
 export interface TelemetryClient {
@@ -81,19 +83,15 @@ export interface TelemetryClient {
  *
  * Rules:
  * - `DO_NOT_TRACK` truthy → disabled (wins over everything)
- * - `AGENT_FLOW_TELEMETRY` falsy (`false`, `0`, `disabled`, ``) → disabled
- * - Otherwise enabled (including when AGENT_FLOW_TELEMETRY is unset)
+ * - `AGENT_FLOW_TELEMETRY=true` (case-insensitive) → enabled
+ * - Any other value, including when unset, → disabled
  */
 export function isTelemetryEnabled(env: NodeJS.ProcessEnv): boolean {
   const dnt = env.DO_NOT_TRACK
   if (dnt !== undefined && dnt !== '' && dnt !== '0' && dnt.toLowerCase() !== 'false') {
     return false
   }
-  const flag = env.AGENT_FLOW_TELEMETRY
-  if (flag !== undefined && FALSY_VALUES.has(flag.toLowerCase())) {
-    return false
-  }
-  return true
+  return env.AGENT_FLOW_TELEMETRY?.trim().toLowerCase() === 'true'
 }
 
 export function createTelemetryClient(opts: TelemetryClientOptions): TelemetryClient {
@@ -143,7 +141,7 @@ export function createTelemetryClient(opts: TelemetryClientOptions): TelemetryCl
 
   function fireSync() {
     if (syncInFlight) return // another sync is already running — skip, not queue
-    syncInFlight = syncOnce({ jsonlPath, cursorPath, endpoint, apiKey })
+    syncInFlight = syncOnce({ jsonlPath, cursorPath, endpoint, apiKey, fetch: opts.fetch })
       .catch(() => {
         // Swallow — next tick retries from the same cursor position.
       })
@@ -200,7 +198,7 @@ export function createTelemetryClient(opts: TelemetryClientOptions): TelemetryCl
       // starts from an up-to-date cursor.
       if (syncInFlight) { try { await syncInFlight } catch { /* best effort */ } }
       if (enabled()) {
-        try { await syncOnce({ jsonlPath, cursorPath, endpoint, apiKey }) } catch { /* best effort */ }
+        try { await syncOnce({ jsonlPath, cursorPath, endpoint, apiKey, fetch: opts.fetch }) } catch { /* best effort */ }
       }
     },
   }

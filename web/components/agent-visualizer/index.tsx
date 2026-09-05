@@ -24,6 +24,10 @@ import { MOCK_DURATION } from "@/lib/mock-scenario"
 import { MessageFeedPanel } from "./message-feed-panel"
 import { TopBar } from "./top-bar"
 import { useAudioEffects } from "@/hooks/use-audio-effects"
+import { OfficeView } from "./office"
+import { officeAgentId, projectOfficeGraph } from "@/lib/office"
+
+type VisualizerMode = 'office' | 'graph'
 
 export function AgentVisualizer() {
   const bridge = useVSCodeBridge()
@@ -62,6 +66,35 @@ export function AgentVisualizer() {
   })
 
   const selection = useSelectionState({ agents, toolCalls, discoveries })
+
+  const [viewMode, setViewMode] = useState<VisualizerMode>('office')
+
+  // Office uses a privacy-scoped projection, while graph selection remains
+  // keyed by the original simulation agent IDs.
+  const officeProjection = useMemo(() => projectOfficeGraph({
+    sessionId: bridge.selectedSessionId ?? undefined,
+    agents: agents.values(),
+    edges,
+  }), [bridge.selectedSessionId, agents, edges])
+  const officeSessions = useMemo(() => bridge.sessions.map(session => ({
+    ...session,
+    // Session labels may be prompt-derived. Office exposes only a short ID.
+    label: `Session ${session.id.slice(0, 8) || 'unknown'}`,
+  })), [bridge.sessions])
+  const officeToGraphAgentId = useMemo(() => {
+    const mapping = new Map<string, string>()
+    for (const graphAgentId of agents.keys()) {
+      mapping.set(officeAgentId(bridge.selectedSessionId ?? undefined, graphAgentId), graphAgentId)
+    }
+    return mapping
+  }, [bridge.selectedSessionId, agents])
+  const officeSelectedAgentId = selection.selectedAgentId
+    ? officeAgentId(bridge.selectedSessionId ?? undefined, selection.selectedAgentId)
+    : null
+  const handleOfficeAgentSelect = useCallback((officeId: string) => {
+    const graphAgentId = officeToGraphAgentId.get(officeId)
+    if (graphAgentId) selection.handleAgentClick(graphAgentId)
+  }, [officeToGraphAgentId, selection.handleAgentClick])
 
   const [showStats, setShowStats] = useState(false)
   const [showHexGrid, setShowHexGrid] = useState(true)
@@ -269,84 +302,125 @@ export function AgentVisualizer() {
         </div>
       )}
 
-      {/* Canvas fills everything */}
-      <AgentCanvas
-        simulationRef={frameRef}
-        selectedAgentId={selection.selectedAgentId}
-        hoveredAgentId={selection.hoveredAgentId}
-        showStats={showStats}
-        showHexGrid={showHexGrid}
-        zoomToFitTrigger={zoomToFitTrigger}
-        pauseAutoFit={selection.contextMenu !== null}
-        onAgentClick={selection.handleAgentClick}
-        onAgentHover={selection.setHoveredAgentId}
-        onAgentDrag={updateAgentPosition}
-        onContextMenu={selection.handleContextMenu}
-        onToolCallClick={selection.handleToolCallClick}
-        selectedToolCallId={selection.selectedToolCallId}
-        onDiscoveryClick={selection.handleDiscoveryClick}
-        selectedDiscoveryId={selection.selectedDiscoveryId}
-        showCostOverlay={showCostOverlay}
-      />
+      {viewMode === 'office' ? (
+        <OfficeView
+          ariaLabel="Oficina de agentes"
+          className="!absolute !inset-0 rounded-none border-0"
+          onClearSelection={selection.clearAgent}
+          onSelectAgent={handleOfficeAgentSelect}
+          projection={officeProjection}
+          selectedAgentId={officeSelectedAgentId}
+        />
+      ) : (
+        <>
+          {/* Canvas fills everything */}
+          <AgentCanvas
+            simulationRef={frameRef}
+            selectedAgentId={selection.selectedAgentId}
+            hoveredAgentId={selection.hoveredAgentId}
+            showStats={showStats}
+            showHexGrid={showHexGrid}
+            zoomToFitTrigger={zoomToFitTrigger}
+            pauseAutoFit={selection.contextMenu !== null}
+            onAgentClick={selection.handleAgentClick}
+            onAgentHover={selection.setHoveredAgentId}
+            onAgentDrag={updateAgentPosition}
+            onContextMenu={selection.handleContextMenu}
+            onToolCallClick={selection.handleToolCallClick}
+            selectedToolCallId={selection.selectedToolCallId}
+            onDiscoveryClick={selection.handleDiscoveryClick}
+            selectedDiscoveryId={selection.selectedDiscoveryId}
+            showCostOverlay={showCostOverlay}
+          />
 
-      {/* Message feed panel (top-left) */}
-      <MessageFeedPanel
-        conversations={conversations}
-        agents={agents}
-        onAgentClick={selection.handleAgentClick}
-        selectedAgentId={selection.selectedAgentId}
-      />
+          {/* Message feed panel (top-left) */}
+          <MessageFeedPanel
+            conversations={conversations}
+            agents={agents}
+            onAgentClick={selection.handleAgentClick}
+            selectedAgentId={selection.selectedAgentId}
+          />
 
-      {/* Agent detail card (floating, tethered to node) */}
-      {selectedAgent && selection.selectedAgentWorldPos && (
-        <div {...stopPropagationHandlers}>
-          <AgentDetailCard
-            agent={selectedAgent}
+          {/* Agent detail card (floating, tethered to node) */}
+          {selectedAgent && selection.selectedAgentWorldPos && (
+            <div {...stopPropagationHandlers}>
+              <AgentDetailCard
+                agent={selectedAgent}
+                onClose={selection.clearAgent}
+              />
+            </div>
+          )}
+
+          {/* Tool call detail popup */}
+          {selection.selectedToolData && selection.selectedToolScreenPos && (
+            <div {...stopPropagationHandlers}>
+              <ToolDetailPopup
+                tool={selection.selectedToolData}
+                position={selection.selectedToolScreenPos}
+                onClose={selection.clearTool}
+              />
+            </div>
+          )}
+
+          {/* Discovery detail popup */}
+          {selection.selectedDiscoveryData && selection.selectedDiscoveryScreenPos && (
+            <div {...stopPropagationHandlers}>
+              <DiscoveryDetailPopup
+                discovery={selection.selectedDiscoveryData}
+                position={selection.selectedDiscoveryScreenPos}
+                onClose={selection.clearDiscovery}
+              />
+            </div>
+          )}
+
+          {/* Chat panel (bottom-right, shown when agent selected) */}
+          <AgentChatPanel
+            visible={!!selectedAgent}
+            agentName={selectedAgent?.name ?? ''}
+            agentState={selectedAgent?.state ?? 'idle'}
+            conversation={selectedConversation}
+            runtime={selectedAgent?.runtime ?? sessionRuntime}
             onClose={selection.clearAgent}
           />
-        </div>
+
+          {/* Context menu */}
+          {selection.contextMenu && (
+            <GlassContextMenu
+              position={selection.contextMenu}
+              items={contextMenuItems}
+              onClose={() => selection.setContextMenu(null)}
+            />
+          )}
+        </>
       )}
 
-      {/* Tool call detail popup */}
-      {selection.selectedToolData && selection.selectedToolScreenPos && (
-        <div {...stopPropagationHandlers}>
-          <ToolDetailPopup
-            tool={selection.selectedToolData}
-            position={selection.selectedToolScreenPos}
-            onClose={selection.clearTool}
-          />
-        </div>
-      )}
-
-      {/* Discovery detail popup */}
-      {selection.selectedDiscoveryData && selection.selectedDiscoveryScreenPos && (
-        <div {...stopPropagationHandlers}>
-          <DiscoveryDetailPopup
-            discovery={selection.selectedDiscoveryData}
-            position={selection.selectedDiscoveryScreenPos}
-            onClose={selection.clearDiscovery}
-          />
-        </div>
-      )}
-
-      {/* Chat panel (bottom-right, shown when agent selected) */}
-      <AgentChatPanel
-        visible={!!selectedAgent}
-        agentName={selectedAgent?.name ?? ''}
-        agentState={selectedAgent?.state ?? 'idle'}
-        conversation={selectedConversation}
-        runtime={selectedAgent?.runtime ?? sessionRuntime}
-        onClose={selection.clearAgent}
-      />
-
-      {/* Context menu */}
-      {selection.contextMenu && (
-        <GlassContextMenu
-          position={selection.contextMenu}
-          items={contextMenuItems}
-          onClose={() => selection.setContextMenu(null)}
-        />
-      )}
+      {/* Accessible, reversible view selector. Office is the default. */}
+      <div
+        aria-label="Vista del visualizador"
+        className="absolute top-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md px-1 py-1 font-mono text-[10px]"
+        role="group"
+        style={{ background: COLORS.holoBg03, border: `1px solid ${COLORS.holoBorder06}`, zIndex: 20 }}
+      >
+        {(['office', 'graph'] as const).map(mode => {
+          const isActive = viewMode === mode
+          return (
+            <button
+              aria-pressed={isActive}
+              className="rounded px-2 py-1 transition-colors"
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              style={{
+                background: isActive ? COLORS.toggleActive : 'transparent',
+                border: `1px solid ${isActive ? COLORS.toggleBorder : 'transparent'}`,
+                color: isActive ? COLORS.holoBright : COLORS.textMuted,
+              }}
+              type="button"
+            >
+              {mode === 'office' ? 'Office' : 'Graph'}
+            </button>
+          )
+        })}
+      </div>
 
       {/* Floating control strip */}
       <ControlBar
@@ -401,7 +475,7 @@ export function AgentVisualizer() {
 
       {/* Top bar: session tabs + info/controls */}
       <TopBar
-        sessions={bridge.sessions}
+        sessions={viewMode === 'office' ? officeSessions : bridge.sessions}
         selectedSessionId={bridge.selectedSessionId}
         sessionsWithActivity={bridge.sessionsWithActivity}
         onSelectSession={bridge.selectSession}

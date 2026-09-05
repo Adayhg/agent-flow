@@ -9,13 +9,15 @@ function setup() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-flow-tel-'))
 }
 
-function makeClient(dir: string) {
+function makeClient(dir: string, env: NodeJS.ProcessEnv = {}, fetch?: typeof globalThis.fetch) {
   return createTelemetryClient({
     logDir: path.join(dir, 'telemetry'),
     installIdPath: path.join(dir, 'installation-id'),
     // Unroutable so tests never hit the real endpoint.
     endpoint: 'http://127.0.0.1:1',
     apiKey: 'test',
+    env,
+    fetch,
   })
 }
 
@@ -34,8 +36,8 @@ test('hardcoded constants are present', () => {
   assert.match(TELEMETRY_PUBLISHABLE_KEY, /^sb_publishable_/)
 })
 
-test('isTelemetryEnabled: default (no env) is true', () => {
-  assert.equal(isTelemetryEnabled({}), true)
+test('isTelemetryEnabled: default (no env) is false', () => {
+  assert.equal(isTelemetryEnabled({}), false)
 })
 
 test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=false disables', () => {
@@ -47,7 +49,8 @@ test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=false disables', () => {
 
 test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=true stays enabled', () => {
   assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: 'true' }), true)
-  assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: '1' }), true)
+  assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: 'TRUE' }), true)
+  assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: '1' }), false)
 })
 
 test('isTelemetryEnabled: DO_NOT_TRACK=1 disables', () => {
@@ -59,11 +62,25 @@ test('isTelemetryEnabled: DO_NOT_TRACK wins even when AGENT_FLOW_TELEMETRY=true'
   assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: 'true', DO_NOT_TRACK: '1' }), false)
 })
 
+test('disabled by default creates no state and does not call transport', async () => {
+  const dir = setup()
+  let transportCalls = 0
+  const fetch = (() => {
+    transportCalls += 1
+    return Promise.reject(new Error('transport must not be called'))
+  }) as typeof globalThis.fetch
+  const client = makeClient(dir, {}, fetch)
+  await client.init()
+  client.emit(baseEvent())
+  await client.dispose()
+  assert.equal(transportCalls, 0)
+  assert.equal(fs.existsSync(path.join(dir, 'telemetry')), false)
+  assert.equal(fs.existsSync(path.join(dir, 'installation-id')), false)
+})
+
 test('emit appends to JSONL when enabled', async () => {
   const dir = setup()
-  const client = makeClient(dir)
-  delete process.env.AGENT_FLOW_TELEMETRY
-  delete process.env.DO_NOT_TRACK
+  const client = makeClient(dir, { AGENT_FLOW_TELEMETRY: 'true' })
   await client.init()
   client.emit(baseEvent())
   await client.dispose()
@@ -79,47 +96,36 @@ test('emit appends to JSONL when enabled', async () => {
 
 test('disabled via AGENT_FLOW_TELEMETRY=false writes nothing to disk', async () => {
   const dir = setup()
-  process.env.AGENT_FLOW_TELEMETRY = 'false'
-  try {
-    const client = makeClient(dir)
-    await client.init()
-    client.emit(baseEvent())
-    await client.dispose()
-    // No events log AND no install-id file — disabled means zero disk footprint.
-    assert.equal(fs.existsSync(path.join(dir, 'telemetry', 'events.jsonl')), false)
-    assert.equal(fs.existsSync(path.join(dir, 'installation-id')), false)
-  } finally {
-    delete process.env.AGENT_FLOW_TELEMETRY
-  }
+  const client = makeClient(dir, { AGENT_FLOW_TELEMETRY: 'false' })
+  await client.init()
+  client.emit(baseEvent())
+  await client.dispose()
+  // No events log AND no install-id file — disabled means zero disk footprint.
+  assert.equal(fs.existsSync(path.join(dir, 'telemetry', 'events.jsonl')), false)
+  assert.equal(fs.existsSync(path.join(dir, 'installation-id')), false)
 })
 
 test('disabled via DO_NOT_TRACK=1 writes nothing to disk', async () => {
   const dir = setup()
-  process.env.DO_NOT_TRACK = '1'
-  try {
-    const client = makeClient(dir)
-    await client.init()
-    client.emit(baseEvent())
-    await client.dispose()
-    assert.equal(fs.existsSync(path.join(dir, 'telemetry', 'events.jsonl')), false)
-    assert.equal(fs.existsSync(path.join(dir, 'installation-id')), false)
-  } finally {
-    delete process.env.DO_NOT_TRACK
-  }
+  const client = makeClient(dir, { DO_NOT_TRACK: '1', AGENT_FLOW_TELEMETRY: 'true' })
+  await client.init()
+  client.emit(baseEvent())
+  await client.dispose()
+  assert.equal(fs.existsSync(path.join(dir, 'telemetry', 'events.jsonl')), false)
+  assert.equal(fs.existsSync(path.join(dir, 'installation-id')), false)
 })
 
 test('install-id persists across init calls', async () => {
   const dir = setup()
-  delete process.env.AGENT_FLOW_TELEMETRY
-  delete process.env.DO_NOT_TRACK
-  const client1 = makeClient(dir)
+  const env = { AGENT_FLOW_TELEMETRY: 'true' }
+  const client1 = makeClient(dir, env)
   await client1.init()
   client1.emit(baseEvent())
   await client1.dispose()
   const idPath = path.join(dir, 'installation-id')
   const id1 = fs.readFileSync(idPath, 'utf-8').trim()
 
-  const client2 = makeClient(dir)
+  const client2 = makeClient(dir, env)
   await client2.init()
   client2.emit(baseEvent())
   await client2.dispose()
@@ -131,9 +137,7 @@ test('install-id persists across init calls', async () => {
 
 test('emit sanitizes session_id', async () => {
   const dir = setup()
-  delete process.env.AGENT_FLOW_TELEMETRY
-  delete process.env.DO_NOT_TRACK
-  const client = makeClient(dir)
+  const client = makeClient(dir, { AGENT_FLOW_TELEMETRY: 'true' })
   await client.init()
   client.emit({ ...baseEvent(), session_id: 'quote"backslash\\newline\n' })
   await client.dispose()
