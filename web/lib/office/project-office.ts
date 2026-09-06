@@ -9,6 +9,12 @@ import type {
   OfficeProjection,
   OfficeProjectionOptions,
 } from './types'
+import {
+  formatAgentWorkLabel,
+  inferAgentWorkRole,
+  isAgentWorkRole,
+  type AgentWorkRole,
+} from '../agent-role'
 
 const DEFAULT_SESSION_ID = 'default-session'
 const DEFAULT_STALE_AFTER_SECONDS = 120
@@ -54,6 +60,11 @@ function displayName(agentId: string): string {
   // Do not retain task/message content. Agent names are bounded to avoid making
   // an accidental payload-sized identifier part of the projection.
   return agentId.replace(/\s+/g, ' ').slice(0, 96)
+}
+
+function roleFromPayload(payload: Record<string, unknown>, ...fallbacks: unknown[]): AgentWorkRole {
+  if (isAgentWorkRole(payload.workRole)) return payload.workRole
+  return inferAgentWorkRole(payload.task, payload.tool, payload.name, payload.model, ...fallbacks)
 }
 
 function avatarFor(agentId: string, model?: string): OfficeAvatar {
@@ -175,9 +186,12 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
       if (!agent || !sourceAgentId) return
 
       const model = text(payload.model)
+      const workRole = payload.isMain === true ? 'orchestrator' : roleFromPayload(payload, sourceAgentId)
       const changes: Partial<OfficeAgent> = {}
       if (model) changes.model = model
       if (model) changes.avatar = avatarFor(sourceAgentId, model)
+      changes.workRole = workRole
+      changes.workLabel = formatAgentWorkLabel(workRole, model || agent.model)
       if (Object.keys(changes).length) replaceAgent(state, agent, changes)
       const parentSourceId = actor(payload, 'parent')
       if (parentSourceId) {
@@ -207,7 +221,13 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
     case 'tool_call_start': {
       const agent = eventAgent(state, sessionId, actor(payload, 'agent'), at)
       const tool = text(payload.tool)
-      if (agent) setState(state, agent, tool ? stateForTool(tool) : 'executing', at)
+      if (agent) {
+        if (!agent.workRole) {
+          const workRole = roleFromPayload(payload, tool)
+          replaceAgent(state, agent, { workRole, workLabel: formatAgentWorkLabel(workRole, agent.model) })
+        }
+        setState(state, state.agents.get(agent.id) ?? agent, tool ? stateForTool(tool) : 'executing', at)
+      }
       return
     }
 
@@ -239,7 +259,11 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
       const agent = eventAgent(state, sessionId, sourceAgentId, at)
       const model = text(payload.model)
       if (agent && model && sourceAgentId) {
-        replaceAgent(state, agent, { model, avatar: avatarFor(sourceAgentId, model) })
+        const workRole = agent.workRole || roleFromPayload(payload, sourceAgentId)
+        replaceAgent(state, agent, {
+          model, avatar: avatarFor(sourceAgentId, model), workRole,
+          workLabel: formatAgentWorkLabel(workRole, model),
+        })
       }
       return
     }
@@ -313,6 +337,9 @@ function applyGraphAgent(state: MutableOfficeState, sessionId: string, source: A
     zone: stateFromGraphAgent(source),
     lastActivityAt: at,
   }
+  const workRole = source.workRole || inferAgentWorkRole(source.task, source.name, source.currentTool, source.model)
+  changes.workRole = workRole
+  changes.workLabel = formatAgentWorkLabel(workRole, source.model)
   if (source.model) {
     changes.model = source.model
     changes.avatar = avatarFor(source.id, source.model)

@@ -2,6 +2,7 @@ import { COLORS } from '@/lib/colors'
 import { TOOL_DEDUP_WINDOW_S } from '@/lib/canvas-constants'
 import { pushTimelineBlock, type ProcessEventContext, type MutableEventState } from './process-event'
 import { appendConversation, asString, asBoolean, LABEL_LEN_PARTICLE, LABEL_LEN_TIMELINE } from './types'
+import { formatAgentWorkLabel, inferAgentWorkRole } from '@/lib/agent-role'
 
 /** Extract file path from tool input data or fall back to first token of args */
 function extractFilePath(inputData?: Record<string, unknown>, args?: string): string {
@@ -33,10 +34,13 @@ export function handleToolCallStart(
     }
     if (isDuplicate) return
 
+    const workRole = agent.workRole || inferAgentWorkRole(toolName, agent.task, agent.name)
     state.agents.set(agentName, {
       ...agent,
       state: 'tool_calling',
       currentTool: toolName,
+      workRole,
+      workLabel: formatAgentWorkLabel(workRole, agent.model),
       toolCalls: agent.toolCalls + 1
     })
 

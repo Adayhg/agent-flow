@@ -185,7 +185,7 @@ export function MessageFeedPanel({
   if (!expanded) {
     if (!latestMessage) return null
     const agent = agents.get(latestMessage.agentId)
-    const agentName = agent?.name ?? latestMessage.agentId
+    const agentName = agent?.workLabel || agent?.name || latestMessage.agentId
     const role = ROLE_COLORS[latestMessage.type] ?? ROLE_COLORS.assistant
     const preview = latestMessage.content.replace(/\n/g, ' ').slice(0, PREVIEW_MAX)
 
@@ -243,7 +243,7 @@ export function MessageFeedPanel({
           />
           {agentsWithMessages.map(agentId => {
             const agent = agents.get(agentId)
-            const name = agent?.name ?? agentId
+            const name = agent?.workLabel || agent?.name || agentId
             const color = agent ? getStateColor(agent.state) : COLORS.idle
             return (
               <TabButton
@@ -284,7 +284,7 @@ export function MessageFeedPanel({
                     <MessageRow
                       message={msg}
                       agentId={msg.agentId}
-                      agentName={agents.get(msg.agentId)?.name ?? msg.agentId}
+                      agentName={agents.get(msg.agentId)?.workLabel || agents.get(msg.agentId)?.name || msg.agentId}
                       showAgent={activeTab === 'all'}
                       isSelected={selectedAgentId === msg.agentId}
                       onClick={() => { onAgentClick(msg.agentId); setExpanded(false) }}

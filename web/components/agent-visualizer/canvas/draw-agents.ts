@@ -312,7 +312,7 @@ function drawAgentLabel(ctx: CanvasRenderingContext2D, agent: Agent, r: number, 
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
   const maxLabelW = r * AGENT_DRAW.labelWidthMultiplier
-  const agentLabel = truncateText(ctx, agent.name, maxLabelW)
+  const agentLabel = truncateText(ctx, agent.workLabel || agent.name, maxLabelW)
   ctx.fillText(agentLabel, agent.x, agent.y + r + AGENT_DRAW.labelYOffset)
 }
 

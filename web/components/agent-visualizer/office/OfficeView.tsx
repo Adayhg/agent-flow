@@ -97,6 +97,10 @@ function initials(name: string): string {
   return (words.slice(0, 2).map(word => word[0]).join('') || 'A').toUpperCase()
 }
 
+function visibleName(agent: OfficeAgent): string {
+  return agent.workLabel || agent.name
+}
+
 function avatarHue(key: string): number {
   let value = 0
   for (let index = 0; index < key.length; index += 1) value = (value * 31 + key.charCodeAt(index)) % 360
@@ -170,7 +174,7 @@ export function OfficeView({
   return (
     <section className={[styles.office, className].filter(Boolean).join(' ')} aria-label={ariaLabel}>
       <div className={styles.srOnly} aria-live="polite">
-        {selected ? `${selected.name}: ${STATE_LABELS[selected.state]}` : `${agents.length} agentes en la oficina`}
+        {selected ? `${visibleName(selected)}: ${STATE_LABELS[selected.state]}` : `${agents.length} agentes en la oficina`}
       </div>
 
       <div className={styles.stage}>
@@ -240,14 +244,15 @@ export function OfficeView({
       </div>
 
       {selected && (
-        <aside className={styles.detail} aria-label={`Detalle de ${selected.name}`}>
+        <aside className={styles.detail} aria-label={`Detalle de ${visibleName(selected)}`}>
           <div className={styles.detailTitle}>
             <span className={styles.detailDot} data-state={selected.state} />
-            <strong>{selected.name}</strong>
+            <strong>{visibleName(selected)}</strong>
             <button className={styles.dismiss} type="button" onClick={onClearSelection} aria-label="Cerrar detalle">×</button>
           </div>
           <span>{STATE_LABELS[selected.state]}</span>
           <span className={styles.zoneLabel}>Zona: {ROOMS.find(room => room.id === roomForZone(selected.zone))?.label}</span>
+          {selected.workLabel && selected.name !== selected.workLabel && <span className={styles.sourceName}>Origen: {selected.name}</span>}
           {selected.model && <span className={styles.modelName}>{selected.model}</span>}
           <code className={styles.agentId}>{selected.id}</code>
         </aside>
@@ -267,10 +272,11 @@ interface OfficeAgentProps {
 
 function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: OfficeAgentProps) {
   const stateLabel = STATE_LABELS[agent.state]
+  const name = visibleName(agent)
   return (
     <button
       aria-pressed={isSelected}
-      aria-label={`${agent.name}, ${stateLabel}, ${room.label}`}
+      aria-label={`${name}, ${stateLabel}, ${room.label}`}
       className={styles.agent}
       data-state={agent.state}
       data-avatar={agent.avatar.family}
@@ -278,15 +284,15 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
       onClick={() => onSelect?.(agent.id)}
       onKeyDown={event => onKeyDown(event, agent.id)}
       style={{ ...style, '--avatar-hue': avatarHue(agent.avatar.key) } as CSSProperties}
-      title={`${agent.name} · ${stateLabel}`}
+      title={`${name} · ${stateLabel}`}
       type="button"
     >
       <span className={styles.avatar} aria-hidden="true">
         <span className={styles.hair} />
-        <span className={styles.face}>{initials(agent.name)}</span>
+        <span className={styles.face}>{initials(name)}</span>
         <span className={styles.body} />
       </span>
-      <span className={styles.agentName}>{agent.name}</span>
+      <span className={styles.agentName}>{name}</span>
       <span className={styles.stateBadge}>{stateLabel}</span>
     </button>
   )

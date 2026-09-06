@@ -224,7 +224,23 @@ interface CodexSubagentIdentity {
   name: string
   task?: string
   model?: string
+  /** Fixed role key inferred from task_name; task text is never emitted. */
+  workRole?: string
   parentId: string
+}
+
+function codexWorkRole(hint: string | undefined): string {
+  const value = (hint || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().slice(0, 256)
+  if (/orchestrat|coordina|supervis|dispatch|delegat|manager/.test(value)) return 'orchestrator'
+  if (/security|seguridad|secure|vulnerab|auth|permission|secret|threat|audit/.test(value)) return 'security'
+  if (/test|qa|validat|verif|check|lint|review|regression|quality|prueba/.test(value)) return 'validator'
+  if (/research|investig|search|browse|explor|discover|documentacion|docs?\b|read|grep|find/.test(value)) return 'researcher'
+  if (/implement|build|code|develop|edit|write|patch|fix|refactor|feature|program/.test(value)) return 'implementer'
+  if (/document|readme|guide|manual|changelog/.test(value)) return 'documenter'
+  if (/design|diseñ|visual|ui|ux|frontend|css|layout/.test(value)) return 'designer'
+  if (/deploy|release|publish|github|merge|integrat|pr\b|pipeline|ship/.test(value)) return 'integrator'
+  if (/analys|analiz|inspect|diagnos|metrics|kpi|report/.test(value)) return 'analyst'
+  return 'specialist'
 }
 
 interface TurnContextPayload {
@@ -741,6 +757,7 @@ export class CodexRolloutParser {
       ...((safeIdentityPart(output?.model) || call.model)
         ? { model: safeIdentityPart(output?.model) || call.model }
         : {}),
+      workRole: codexWorkRole(call.taskName || safeIdentityPart(output?.role)),
     }
   }
 
@@ -769,6 +786,7 @@ export class CodexRolloutParser {
         isMain: false,
         task: child.task || child.name,
         ...(child.model ? { model: child.model } : {}),
+        ...(child.workRole ? { workRole: child.workRole } : {}),
         runtime: 'codex',
       },
     })

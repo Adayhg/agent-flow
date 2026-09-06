@@ -85,6 +85,18 @@ test('keeps Terra and Luna explicit while accepting model IDs outside a catalogu
   assert.equal(projection.agents.get(officeAgentId('session-a', 'future'))?.model, 'acme-next-42')
 })
 
+test('labels agents by bounded work role without copying task text', () => {
+  const projection = projectOffice([
+    event('agent_spawn', {
+      name: 'worker-1', task: 'Review payment authentication and security controls', model: 'gpt-5.6-terra',
+    }),
+  ])
+  const worker = projection.agents.get(officeAgentId('session-a', 'worker-1'))
+  assert.equal(worker?.workRole, 'security')
+  assert.equal(worker?.workLabel, 'Seguridad · Terra')
+  assert.equal(worker?.workLabel?.includes('payment'), false)
+})
+
 test('ignores an unknown event type rather than inventing an agent or state', () => {
   const projection = projectOffice([event('relay_future_event', { agent: 'not-created' })])
   assert.equal(projection.agents.size, 0)

@@ -1,5 +1,6 @@
 // Agent Visualizer Types — Holographic Edition v2
 // Now with actual information visibility
+import type { AgentWorkRole } from './agent-role'
 
 export type AgentState = 'idle' | 'thinking' | 'tool_calling' | 'complete' | 'error' | 'paused' | 'waiting_permission'
 
@@ -15,6 +16,10 @@ export interface ContextBreakdown {
 export interface Agent {
   id: string
   name: string
+  /** Fixed-vocabulary role inferred from bounded work hints. */
+  workRole?: AgentWorkRole
+  /** Human-readable role/model label; source task text is never included. */
+  workLabel?: string
   state: AgentState
   parentId: string | null
   tokensUsed: number

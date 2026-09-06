@@ -29,6 +29,16 @@ from the source agent ID and session ID. This keeps an identity stable across
 render/replay while preventing same-named agents in separate sessions from
 colliding.
 
+## Work-based names
+
+The UI assigns each agent a short role label from a closed Spanish vocabulary:
+Orquestador, Seguridad, Validador, Investigador, Implementador, Documentador,
+Diseñador, Integrador, Analista, or Especialista. The role is inferred from
+bounded work hints such as a Codex `task_name`, a tool name, or the model family.
+The original task/prompt is never copied into the label. The stable opaque ID
+remains visible in the detail panel so agents with the same role are still
+distinguishable.
+
 Nested agents are connected only by explicit `agent_spawn` or
 `subagent_dispatch` evidence (or an existing Graph parent-child edge). Matching
 names alone never create a parent/child relationship, and a parent that has

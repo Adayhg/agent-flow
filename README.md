@@ -40,6 +40,11 @@ different sessions remain distinct and nested agents can be represented. Terra
 and Luna receive their named avatar families; other and future model IDs are
 kept as reported without a hard-coded model catalogue.
 
+Agents also receive a short work-based label (for example, `Seguridad · Terra`
+or `Validador · Luna`). Labels come from a closed vocabulary inferred from
+bounded work hints; prompts and task text are not copied into the UI. The
+opaque agent ID remains available for exact identification.
+
 Office intentionally exposes only bounded names, model IDs, states, zones, and
 relationship evidence. Prompts, transcript text, file paths, and tool
 arguments are not passed to the Office view. The implementation is local and

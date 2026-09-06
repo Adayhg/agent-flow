@@ -1,3 +1,5 @@
+import type { AgentWorkRole } from '../agent-role'
+
 /**
  * A deliberately small, UI-agnostic view of a running agent.  This is not a
  * second source of truth: it is a privacy-conscious projection of the event
@@ -30,6 +32,10 @@ export interface OfficeAgent {
   id: string
   /** A short label only. Task text, messages and tool arguments are excluded. */
   name: string
+  /** Fixed-vocabulary semantic role, never the original prompt. */
+  workRole?: AgentWorkRole
+  /** Localized role label with an optional model family. */
+  workLabel?: string
   parentId: string | null
   state: OfficeAgentState
   zone: OfficeZone

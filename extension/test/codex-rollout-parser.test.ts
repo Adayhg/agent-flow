@@ -316,6 +316,7 @@ describe('CodexRolloutParser', () => {
     assert.equal(spawns[0].payload.parentId, 'root-thread')
     assert.equal(spawns[0].payload.task, 'researcher')
     assert.equal(spawns[0].payload.model, 'future-codex-model')
+    assert.equal(spawns[0].payload.workRole, 'researcher')
     assert.equal(events.filter(e => e.type === 'subagent_dispatch').length, 1)
     assert.equal(JSON.stringify(events).includes('redacted task prompt'), false)
   })

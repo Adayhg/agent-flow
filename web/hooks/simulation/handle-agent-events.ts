@@ -7,6 +7,7 @@ import { COLORS } from '@/lib/colors'
 import { AGENT_SPAWN_DISTANCE } from '@/lib/canvas-constants'
 import { pushTimelineBlock, type ProcessEventContext, type MutableEventState } from './process-event'
 import { edgeId, asString, asBoolean } from './types'
+import { formatAgentWorkLabel, inferAgentWorkRole, isAgentWorkRole, type AgentWorkRole } from '@/lib/agent-role'
 
 /** Return the first non-empty string in a list of payload fields. */
 function firstString(payload: Record<string, unknown>, fields: string[]): string | undefined {
@@ -15,6 +16,12 @@ function firstString(payload: Record<string, unknown>, fields: string[]): string
     if (typeof value === 'string' && value.length > 0) return value
   }
   return undefined
+}
+
+function workRoleFromPayload(payload: Record<string, unknown>, isMain: boolean, ...hints: unknown[]): AgentWorkRole {
+  if (isMain) return 'orchestrator'
+  if (isAgentWorkRole(payload.workRole)) return payload.workRole
+  return inferAgentWorkRole(payload.task, payload.tool, payload.name, payload.model, ...hints)
 }
 
 /**
@@ -53,6 +60,8 @@ export function handleAgentSpawn(
   const task = typeof payload.task === 'string' ? payload.task : undefined
   const model = typeof payload.model === 'string' ? payload.model : undefined
   const runtime = payload.runtime === 'codex' ? 'codex' as const : undefined
+  const workRole = workRoleFromPayload(payload, isMain, displayName, agentId)
+  const workLabel = formatAgentWorkLabel(workRole, model)
 
   // If the agent already exists (e.g. session resuming after inactivity),
   // reactivate it instead of replacing — preserves accumulated stats.
@@ -66,6 +75,8 @@ export function handleAgentSpawn(
       ...(task ? { task } : {}),
       ...(model ? { model, tokensMax: ctx.getContextWindowSize(model) } : {}),
       ...(runtime ? { runtime } : {}),
+      workRole,
+      workLabel,
     })
     return
   }
@@ -118,6 +129,8 @@ export function handleAgentSpawn(
     pinned: false, isMain,
     ...(runtime ? { runtime } : {}),
     ...(model ? { model } : {}),
+    workRole,
+    workLabel,
     task,
     spawnTime: currentTime,
     opacity: 0, scale: 0.3,
@@ -225,9 +238,12 @@ export function handleModelDetected(
   const model = asString(payload.model)
   const agent = state.agents.get(agentId)
   if (agent) {
+    const workRole = agent.workRole || inferAgentWorkRole(model, agent.name)
     state.agents.set(agentId, {
       ...agent,
       model,
+      workRole,
+      workLabel: formatAgentWorkLabel(workRole, model),
       tokensMax: ctx.getContextWindowSize(model),
     })
   }

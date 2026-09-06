@@ -10,6 +10,7 @@ interface AgentDetailCardProps {
   agent: {
     id: string
     name: string
+    workLabel?: string
     state: AgentState
     model?: string
     tokensUsed: number
@@ -51,7 +52,7 @@ export function AgentDetailCard({
         />
         <div className="flex flex-col">
           <span className="text-xs font-mono" style={{ color: COLORS.textPrimary }}>
-            {agent.name}
+            {agent.workLabel || agent.name}
           </span>
           {agent.model && (
             <span className="text-[9px] font-mono" style={{ color: COLORS.textDim }}>

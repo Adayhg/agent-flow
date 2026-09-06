@@ -124,7 +124,7 @@
 .detailDot[data-state="completed"] { background: #2f8d61; }.detailDot[data-state="blocked"] { background: #bd4f54; }.detailDot[data-state="waiting_approval"], .detailDot[data-state="executing"] { background: #bf7b22; }
 .dismiss { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: #536179; cursor: pointer; font-size: 19px; line-height: 1; }
 .dismiss:focus-visible { outline: 2px solid #163d7b; }
-.zoneLabel, .modelName, .agentId { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.zoneLabel, .sourceName, .modelName, .agentId { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
 .modelName, .agentId { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modelName { color: #485b7a; font-family: ui-monospace, monospace; }
 .agentId { color: #6d778a; font-size: 10px; }
