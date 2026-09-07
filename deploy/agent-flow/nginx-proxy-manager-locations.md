@@ -16,6 +16,8 @@ location = /agent-flow {
 }
 
 location /agent-flow/ {
+    auth_basic "Agent Flow Office";
+    auth_basic_user_file /data/nginx/custom/agent-flow-office.htpasswd;
     # Strip the public prefix; Next.js basePath is used for generated asset
     # URLs, while the next-server itself serves the route at its root.
     proxy_pass http://172.17.0.1:8612/;
