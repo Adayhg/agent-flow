@@ -72,12 +72,15 @@ export function useVSCodeBridge(): BridgeHookResult {
     // Skip in VS Code — extension handles events via postMessage
     if (bridge.isVSCode) return
 
-    // Connect to relay in dev mode or standalone CLI mode
+    // Connect to relay in dev mode, standalone CLI mode, or hosted VPS mode.
     const isStandalone = process.env.AGENT_FLOW_STANDALONE === '1'
-    if (!isStandalone && (process.env.NODE_ENV !== 'development' || process.env.NEXT_PUBLIC_DEMO !== '0')) return
+    const hostedRelayUrl = process.env.NEXT_PUBLIC_RELAY_URL || ''
+    const isDevRelay = process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_DEMO === '0'
+    if (!isStandalone && !hostedRelayUrl && !isDevRelay) return
 
     const relayPort = process.env.NEXT_PUBLIC_RELAY_PORT || ''
-    const es = new EventSource(relayPort ? `http://127.0.0.1:${relayPort}/events` : '/events')
+    const relayUrl = hostedRelayUrl || (relayPort ? `http://127.0.0.1:${relayPort}/events` : '/events')
+    const es = new EventSource(relayUrl)
 
     es.onopen = () => {
       setConnectionStatus('connected')

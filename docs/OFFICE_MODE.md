@@ -70,8 +70,11 @@ To opt in, set `AGENT_FLOW_TELEMETRY=true`; `DO_NOT_TRACK=1` always prevails.
 In PowerShell, use `$env:AGENT_FLOW_TELEMETRY="true"` before running the
 command.
 
-The relay and standalone UI use localhost (the relay's SSE endpoint is bound
-to `127.0.0.1`). This is a local workflow, not a hosted deployment.
+The development relay and standalone UI use localhost (the relay's SSE endpoint
+is bound to `127.0.0.1`). The hosted VPS profile is separate: the relay and
+agents run on the VPS, the web UI is published under the launcher's protected
+`/agent-flow/` path, and the browser connects to `/agent-flow/events` over the
+same HTTPS origin. See `deploy/agent-flow/` for the service and proxy contract.
 
 ## Start, demo, test, and build
 

@@ -84,6 +84,27 @@ Open http://localhost:3000 and start a Claude Code session in another terminal â
 The relay binds to localhost for the local workflow. It reads the existing
 Claude Code and Codex event sources; it does not require a hosted service.
 
+### Hosted VPS Office
+
+For an internal office that remains available when a workstation is retired,
+run the agents, relay, and Next.js server on the same VPS. The browser then
+opens the launcher path (for example `/agent-flow/`) and receives the relay
+over the same HTTPS origin; no local server or local transcript copy is
+needed.
+
+The hosted build uses these public-build variables:
+
+```bash
+NEXT_PUBLIC_BASE_PATH=/agent-flow
+NEXT_PUBLIC_RELAY_URL=/agent-flow/events
+NEXT_PUBLIC_DEMO=0
+```
+
+The production units, reverse-proxy locations, PWA manifest, and network-only
+service worker are in [`deploy/agent-flow/`](deploy/agent-flow/). Keep the
+private web and relay listeners behind the launcher's existing authentication;
+never publish the relay port directly or cache authenticated agent data.
+
 ### VS Code Extension
 
 1. Install the extension

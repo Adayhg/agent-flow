@@ -1,0 +1,22 @@
+[Unit]
+Description=Agent Flow Office web UI
+After=network-online.target agent-flow-relay.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=discanary
+Group=discanary
+WorkingDirectory=/home/discanary/apps/agent-flow-office/web
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /home/discanary/apps/agent-flow-office/web/node_modules/next/dist/bin/next start -H 172.17.0.1 -p 8610
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/discanary/apps/agent-flow-office/.next
+
+[Install]
+WantedBy=multi-user.target

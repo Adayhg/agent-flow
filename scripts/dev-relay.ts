@@ -9,6 +9,7 @@ import { DEFAULT_RELAY_PORT, DEV_WEB_ORIGIN_PATTERN } from '../extension/src/con
 
 async function main() {
   const workspace = process.argv[2] || process.cwd()
+  const relayHost = process.env.AGENT_FLOW_RELAY_HOST || '127.0.0.1'
 
   console.log('Starting Agent Flow dev relay...\n')
   console.log(`Workspace: ${workspace}`)
@@ -36,12 +37,18 @@ async function main() {
       return relay.handleSSE(req, res)
     }
 
+    if (req.url === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ status: 'ok', service: 'agent-flow-office-relay' }))
+      return
+    }
+
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('Agent Flow Dev Relay')
   })
 
-  server.listen(DEFAULT_RELAY_PORT, '127.0.0.1', () => {
-    console.log(`\nSSE relay on http://127.0.0.1:${DEFAULT_RELAY_PORT}/events`)
+  server.listen(DEFAULT_RELAY_PORT, relayHost, () => {
+    console.log(`\nSSE relay on http://${relayHost}:${DEFAULT_RELAY_PORT}/events`)
     console.log('Ready! Events will appear in the web app.')
   })
 
