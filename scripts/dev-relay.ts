@@ -10,6 +10,11 @@ import { DEFAULT_RELAY_PORT, DEV_WEB_ORIGIN_PATTERN } from '../extension/src/con
 async function main() {
   const workspace = process.argv[2] || process.cwd()
   const relayHost = process.env.AGENT_FLOW_RELAY_HOST || '127.0.0.1'
+  const configuredPort = process.env.AGENT_FLOW_RELAY_PORT
+  const relayPort = configuredPort === undefined ? DEFAULT_RELAY_PORT : Number.parseInt(configuredPort, 10)
+  if (!Number.isInteger(relayPort) || relayPort < 1 || relayPort > 65535) {
+    throw new Error(`Invalid AGENT_FLOW_RELAY_PORT: ${configuredPort}`)
+  }
 
   console.log('Starting Agent Flow dev relay...\n')
   console.log(`Workspace: ${workspace}`)
@@ -47,8 +52,8 @@ async function main() {
     res.end('Agent Flow Dev Relay')
   })
 
-  server.listen(DEFAULT_RELAY_PORT, relayHost, () => {
-    console.log(`\nSSE relay on http://${relayHost}:${DEFAULT_RELAY_PORT}/events`)
+  server.listen(relayPort, relayHost, () => {
+    console.log(`\nSSE relay on http://${relayHost}:${relayPort}/events`)
     console.log('Ready! Events will appear in the web app.')
   })
 

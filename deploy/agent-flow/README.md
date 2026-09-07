@@ -16,6 +16,11 @@ checkout is only a development/review source; the runtime lives on the VPS.
 The relay must run on the same host as the agents. It is not a GitHub Actions
 job and it is not a Windows process.
 
+For a pre-production preview, keep the same code and use a separate checkout,
+path, and ports (for example `/agent-flow-preview/`, `8611`, and `3002`) with
+`AGENT_FLOW_RELAY_PORT=3002`. Never point the preview proxy at the production
+ports.
+
 ## New agent onboarding contract
 
 The Office is event-driven, so adding a subagent to a supported Claude or Codex
