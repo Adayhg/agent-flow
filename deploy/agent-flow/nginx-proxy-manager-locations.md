@@ -18,7 +18,7 @@ location = /agent-flow {
 location /agent-flow/ {
     # Strip the public prefix; Next.js basePath is used for generated asset
     # URLs, while the next-server itself serves the route at its root.
-    proxy_pass http://172.17.0.1:8610/;
+    proxy_pass http://172.17.0.1:8612/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;

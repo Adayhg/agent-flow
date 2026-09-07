@@ -9,7 +9,7 @@ User=discanary
 Group=discanary
 WorkingDirectory=/home/discanary/apps/agent-flow-office/web
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /home/discanary/apps/agent-flow-office/web/node_modules/next/dist/bin/next start -H 172.17.0.1 -p 8610
+ExecStart=/usr/bin/node /home/discanary/apps/agent-flow-office/web/node_modules/next/dist/bin/next start -H 172.17.0.1 -p 8612
 Restart=always
 RestartSec=5
 NoNewPrivileges=true

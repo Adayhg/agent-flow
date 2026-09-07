@@ -6,7 +6,7 @@ checkout is only a development/review source; the runtime lives on the VPS.
 ## Runtime contract
 
 - App root: `/home/discanary/apps/agent-flow-office`
-- Private web listener: `172.17.0.1:8610`
+- Private web listener: `172.17.0.1:8612` (kept separate from the existing Mantenimiento service on `8610`)
 - Private SSE relay: `172.17.0.1:3001`
 - Public path: `/agent-flow/` on the already authenticated launcher host
 - Browser SSE path: `/agent-flow/events`
