@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, type CSSProperties, type KeyboardEvent } from 'react'
+import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import type {
   OfficeAgent,
   OfficeAgentState,
@@ -8,7 +8,7 @@ import type {
   OfficeProjection,
   OfficeZone,
 } from '@/lib/office'
-import { agentWorkRoleLabel, modelFamilyLabel, type AgentWorkRole } from '@/lib/agent-role'
+import { AGENT_WORK_ROLES, agentWorkRoleLabel, modelFamilyLabel, type AgentWorkRole } from '@/lib/agent-role'
 import styles from './office.module.css'
 
 type RoomId = 'entrance' | 'meetings' | 'library' | 'desks' | 'lab' | 'decisions' | 'incidents' | 'deliveries'
@@ -134,6 +134,10 @@ function avatarHue(key: string): number {
   return value
 }
 
+type OfficeFilterValue = 'all'
+type StateFilter = OfficeAgentState | OfficeFilterValue
+type RoleFilter = AgentWorkRole | OfficeFilterValue
+
 export interface OfficeViewProps {
   /** Privacy-scoped source. This is the preferred Office contract. */
   projection?: OfficeProjection
@@ -162,14 +166,32 @@ export function OfficeView({
   className,
   ariaLabel = 'Oficina de agentes',
 }: OfficeViewProps) {
+  const [stateFilter, setStateFilter] = useState<StateFilter>('all')
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
+  const [search, setSearch] = useState('')
+  const [zoom, setZoom] = useState(1)
   const agents = useMemo(() => Array.from((projection?.agents ?? agentMap ?? new Map<string, OfficeAgent>()).values()), [projection, agentMap])
-  const placements = useMemo(() => placeAgents(agents), [agents])
+  const visibleAgents = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase()
+    return agents.filter(agent => {
+      if (stateFilter !== 'all' && agent.state !== stateFilter) return false
+      if (roleFilter !== 'all' && agent.workRole !== roleFilter) return false
+      if (!query) return true
+      return `${agent.name} ${agent.workLabel ?? ''}`.toLocaleLowerCase().includes(query)
+    })
+  }, [agents, roleFilter, search, stateFilter])
+  const placements = useMemo(() => placeAgents(visibleAgents), [visibleAgents])
   const placementById = useMemo(() => new Map(placements.map(placement => [placement.agent.id, placement])), [placements])
   const hierarchy = useMemo(
     () => (projection?.edges ?? suppliedEdges ?? []).filter(edge => placementById.has(edge.parentId) && placementById.has(edge.childId)),
     [projection, suppliedEdges, placementById],
   )
   const selected = selectedAgentId ? placementById.get(selectedAgentId)?.agent ?? null : null
+  const roomCounts = useMemo(() => {
+    const counts = new Map<RoomId, number>()
+    for (const placement of placements) counts.set(placement.room.id, (counts.get(placement.room.id) ?? 0) + 1)
+    return counts
+  }, [placements])
 
   const selectAt = (nextIndex: number) => {
     const next = placements[(nextIndex + placements.length) % placements.length]
@@ -201,60 +223,113 @@ export function OfficeView({
   return (
     <section className={[styles.office, className].filter(Boolean).join(' ')} aria-label={ariaLabel}>
       <div className={styles.srOnly} aria-live="polite">
-        {selected ? `${visibleName(selected)}: ${STATE_LABELS[selected.state]}` : `${agents.length} agentes en la oficina`}
+        {selected ? `${visibleName(selected)}: ${STATE_LABELS[selected.state]}` : `${visibleAgents.length} agentes visibles de ${agents.length}`}
       </div>
 
-      <div className={styles.stage}>
-        <div className={styles.floor} aria-hidden="true">
-          {ROOMS.map(room => (
-            <div
-              className={`${styles.room} ${styles[`room_${room.id}`]}`}
-              key={room.id}
-              style={{ '--room-x': room.x, '--room-y': room.y, '--room-w': room.width, '--room-h': room.height } as CSSProperties}
-            >
-              <span className={styles.roomLabel}>{room.label}</span>
-              <span className={styles.roomHint}>{room.hint}</span>
-              <span className={styles.roomFurniture} />
-            </div>
-          ))}
+      <div className={styles.officeToolbar} aria-label="Controles de oficina">
+        <label className={styles.filterField}>
+          <span>Buscar</span>
+          <input
+            aria-label="Buscar agente por nombre o rol"
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Nombre o rol"
+            type="search"
+            value={search}
+          />
+        </label>
+        <label className={styles.filterField}>
+          <span>Estado</span>
+          <select aria-label="Filtrar por estado" onChange={event => setStateFilter(event.target.value as StateFilter)} value={stateFilter}>
+            <option value="all">Todos</option>
+            {Object.entries(STATE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label className={styles.filterField}>
+          <span>Rol</span>
+          <select aria-label="Filtrar por rol" onChange={event => setRoleFilter(event.target.value as RoleFilter)} value={roleFilter}>
+            <option value="all">Todos</option>
+            {AGENT_WORK_ROLES.map(role => <option key={role} value={role}>{agentWorkRoleLabel(role)}</option>)}
+          </select>
+        </label>
+        <div className={styles.zoomControls} aria-label="Zoom de la oficina">
+          <button aria-label="Alejar" disabled={zoom <= 0.85} onClick={() => setZoom(value => Math.max(.85, Number((value - .15).toFixed(2))))} type="button">−</button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <button aria-label="Acercar" disabled={zoom >= 1.3} onClick={() => setZoom(value => Math.min(1.3, Number((value + .15).toFixed(2))))} type="button">+</button>
+          <button aria-label="Restablecer zoom" disabled={zoom === 1} onClick={() => setZoom(1)} type="button">Reset</button>
         </div>
+        {(search || stateFilter !== 'all' || roleFilter !== 'all') && (
+          <button className={styles.clearFilters} onClick={() => { setSearch(''); setStateFilter('all'); setRoleFilter('all') }} type="button">Limpiar</button>
+        )}
+      </div>
 
-        <svg className={styles.edges} viewBox="0 0 1000 630" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <marker id="office-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
-              <path d="M0,0 L7,3.5 L0,7 Z" className={styles.edgeArrow} />
-            </marker>
-          </defs>
-          {hierarchy.map(edge => {
-            const from = placementById.get(edge.parentId)
-            const to = placementById.get(edge.childId)
-            if (!from || !to) return null
-            const midX = (from.x + to.x) / 2
-            return (
-              <path
-                className={styles.edge}
-                d={`M ${from.x} ${from.y - 15} C ${midX} ${from.y - 48}, ${midX} ${to.y - 48}, ${to.x} ${to.y - 18}`}
-                key={edge.id}
-                markerEnd="url(#office-arrow)"
-                opacity={0.72}
+      <div className={styles.stageViewport}>
+        <div className={styles.stage} style={{ '--office-zoom': zoom } as CSSProperties}>
+          <div className={styles.floor} aria-hidden="true">
+            {ROOMS.map(room => (
+              <div
+                className={`${styles.room} ${styles[`room_${room.id}`]}`}
+                key={room.id}
+                style={{ '--room-x': room.x, '--room-y': room.y, '--room-w': room.width, '--room-h': room.height } as CSSProperties}
+              >
+                <span className={styles.roomLabel}>{room.label}</span>
+                <span className={styles.roomHint}>{room.hint}</span>
+                <span className={styles.roomCount}>{roomCounts.get(room.id) ?? 0}</span>
+                <span className={styles.roomFurniture} />
+              </div>
+            ))}
+          </div>
+
+          <svg className={styles.edges} viewBox="0 0 1000 630" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <marker id="office-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 Z" className={styles.edgeArrow} />
+              </marker>
+            </defs>
+            {hierarchy.map(edge => {
+              const from = placementById.get(edge.parentId)
+              const to = placementById.get(edge.childId)
+              if (!from || !to) return null
+              const midX = (from.x + to.x) / 2
+              return (
+                <path
+                  className={styles.edge}
+                  d={`M ${from.x} ${from.y - 15} C ${midX} ${from.y - 48}, ${midX} ${to.y - 48}, ${to.x} ${to.y - 18}`}
+                  key={edge.id}
+                  markerEnd="url(#office-arrow)"
+                  opacity={0.72}
+                />
+              )
+            })}
+          </svg>
+
+          <div className={styles.agentLayer}>
+            {placements.map(({ agent, room, x, y }) => (
+              <OfficeAgent
+                agent={agent}
+                isSelected={selectedAgentId === agent.id}
+                key={agent.id}
+                onKeyDown={handleAgentKeyDown}
+                onSelect={onSelectAgent}
+                room={room}
+                style={{ '--agent-x': `${x / 10}%`, '--agent-y': `${y / 6.3}%` } as CSSProperties}
               />
-            )
-          })}
-        </svg>
-
-        <div className={styles.agentLayer}>
-          {placements.map(({ agent, room, x, y }) => (
-            <OfficeAgent
-              agent={agent}
-              isSelected={selectedAgentId === agent.id}
-              key={agent.id}
-              onKeyDown={handleAgentKeyDown}
-              onSelect={onSelectAgent}
-              room={room}
-              style={{ '--agent-x': `${x / 10}%`, '--agent-y': `${y / 6.3}%` } as CSSProperties}
-            />
-          ))}
+            ))}
+          </div>
+          {visibleAgents.length === 0 && (
+            <div className={styles.emptyState} role="status">
+              <strong>{agents.length === 0 ? 'Oficina en espera' : 'Ningún agente coincide'}</strong>
+              <span>{agents.length === 0 ? 'Cuando arranque una sesión aparecerán aquí.' : 'Cambia o limpia los filtros para volver a ver agentes.'}</span>
+            </div>
+          )}
         </div>
+      </div>
+
+      <div className={styles.officeLegend} aria-label="Leyenda de oficina">
+        <span><i data-tone="active" /> Activo</span>
+        <span><i data-tone="waiting" /> Permiso</span>
+        <span><i data-tone="blocked" /> Bloqueado</span>
+        <span><i data-tone="complete" /> Completado</span>
+        <span className={styles.connectionCount}>{hierarchy.length} conexiones</span>
       </div>
 
       <div className={styles.mobileList} aria-label="Lista de agentes">

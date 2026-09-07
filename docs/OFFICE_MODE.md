@@ -56,6 +56,20 @@ executing, waiting for approval, blocked, completed, idle, unknown, and stale.
 These are observations, not a claim about hidden reasoning or the full state
 of a runtime.
 
+## Office controls
+
+The Office view remains read-only while making the observation easier to scan:
+
+- search by the bounded agent name or work label;
+- filter by observed state or work role;
+- zoom the floor between 85% and 130%;
+- see room occupancy, relationship count, and a compact state legend;
+- use the responsive list on narrow screens, with the same filters and selection.
+
+Filtering only changes the presentation. It does not alter the underlying graph,
+dispatch work, or write to the watched workspaces. The **Graph** view remains
+available as the technical topology view.
+
 ## Privacy and localhost
 
 Office is local and read-only. It deliberately omits prompts, paths, and tool
