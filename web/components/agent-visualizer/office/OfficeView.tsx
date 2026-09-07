@@ -8,6 +8,7 @@ import type {
   OfficeProjection,
   OfficeZone,
 } from '@/lib/office'
+import { agentWorkRoleLabel, modelFamilyLabel, type AgentWorkRole } from '@/lib/agent-role'
 import styles from './office.module.css'
 
 type RoomId = 'entrance' | 'meetings' | 'library' | 'desks' | 'lab' | 'decisions' | 'incidents' | 'deliveries'
@@ -51,6 +52,32 @@ const STATE_LABELS: Record<OfficeAgentState, string> = {
   completed: 'Completado',
   idle: 'Disponible',
   stale: 'Sin actividad reciente',
+}
+
+const STATE_MARKS: Record<OfficeAgentState, string> = {
+  unknown: '•',
+  planning: '⌁',
+  researching: '⌕',
+  editing: '✎',
+  executing: '▶',
+  waiting_approval: '!',
+  blocked: '×',
+  completed: '✓',
+  idle: '·',
+  stale: '…',
+}
+
+const ROLE_MARKS: Record<AgentWorkRole, string> = {
+  orchestrator: '◆',
+  security: '◈',
+  validator: '✓',
+  researcher: '⌕',
+  implementer: '⌘',
+  documenter: '▤',
+  designer: '✦',
+  integrator: '⇄',
+  analyst: '▥',
+  specialist: '★',
 }
 
 function roomForZone(zone: OfficeZone): RoomId {
@@ -273,11 +300,16 @@ interface OfficeAgentProps {
 function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: OfficeAgentProps) {
   const stateLabel = STATE_LABELS[agent.state]
   const name = visibleName(agent)
+  const roleLabel = agent.workRole ? agentWorkRoleLabel(agent.workRole) : 'Especialista'
+  const familyLabel = modelFamilyLabel(agent.model)
+  const roleMark = agent.workRole ? ROLE_MARKS[agent.workRole] : ROLE_MARKS.specialist
+  const stateMark = STATE_MARKS[agent.state]
   return (
     <button
       aria-pressed={isSelected}
-      aria-label={`${name}, ${stateLabel}, ${room.label}`}
+      aria-label={`${name}, ${roleLabel}${familyLabel ? `, ${familyLabel}` : ''}, ${stateLabel}, ${room.label}`}
       className={styles.agent}
+      data-role={agent.workRole ?? 'specialist'}
       data-state={agent.state}
       data-avatar={agent.avatar.family}
       data-avatar-key={agent.avatar.key}
@@ -291,9 +323,11 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
         <span className={styles.hair} />
         <span className={styles.face}>{initials(name)}</span>
         <span className={styles.body} />
+        <span className={styles.avatarAccessory}>{roleMark}</span>
       </span>
       <span className={styles.agentName}>{name}</span>
-      <span className={styles.stateBadge}>{stateLabel}</span>
+      <span className={styles.roleBadge}><span aria-hidden="true">{roleMark}</span>{roleLabel}{familyLabel ? ` · ${familyLabel}` : ''}</span>
+      <span className={styles.stateBadge}><span aria-hidden="true">{stateMark}</span>{stateLabel}</span>
     </button>
   )
 }
