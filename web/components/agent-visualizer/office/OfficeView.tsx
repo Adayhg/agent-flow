@@ -17,6 +17,7 @@ interface RoomDefinition {
   id: RoomId
   label: string
   hint: string
+  icon: string
   x: number
   y: number
   width: number
@@ -31,14 +32,14 @@ interface PlacedAgent {
 }
 
 const ROOMS: readonly RoomDefinition[] = [
-  { id: 'entrance', label: 'Entrada', hint: 'Agentes disponibles', x: 22, y: 22, width: 198, height: 150 },
-  { id: 'meetings', label: 'Reuniones', hint: 'Coordinación', x: 260, y: 22, width: 226, height: 150 },
-  { id: 'library', label: 'Biblioteca', hint: 'Investigación', x: 526, y: 22, width: 226, height: 150 },
-  { id: 'lab', label: 'Laboratorio', hint: 'Herramientas', x: 792, y: 22, width: 186, height: 150 },
-  { id: 'desks', label: 'Escritorios', hint: 'Trabajo en curso', x: 22, y: 218, width: 334, height: 184 },
-  { id: 'decisions', label: 'Decisiones', hint: 'Esperando permiso', x: 396, y: 218, width: 214, height: 184 },
-  { id: 'incidents', label: 'Incidencias', hint: 'Necesita atención', x: 650, y: 218, width: 328, height: 184 },
-  { id: 'deliveries', label: 'Entregas', hint: 'Trabajo terminado', x: 260, y: 448, width: 480, height: 154 },
+  { id: 'entrance', label: 'Entrada', hint: 'Agentes disponibles', icon: '✦', x: 22, y: 22, width: 198, height: 150 },
+  { id: 'meetings', label: 'Reuniones', hint: 'Coordinación', icon: '◌', x: 260, y: 22, width: 226, height: 150 },
+  { id: 'library', label: 'Biblioteca', hint: 'Investigación', icon: '▤', x: 526, y: 22, width: 226, height: 150 },
+  { id: 'lab', label: 'Laboratorio', hint: 'Herramientas', icon: '⚙', x: 792, y: 22, width: 186, height: 150 },
+  { id: 'desks', label: 'Escritorios', hint: 'Trabajo en curso', icon: '▥', x: 22, y: 218, width: 334, height: 184 },
+  { id: 'decisions', label: 'Decisiones', hint: 'Esperando permiso', icon: '⚖', x: 396, y: 218, width: 214, height: 184 },
+  { id: 'incidents', label: 'Incidencias', hint: 'Necesita atención', icon: '!', x: 650, y: 218, width: 328, height: 184 },
+  { id: 'deliveries', label: 'Entregas', hint: 'Trabajo terminado', icon: '✓', x: 260, y: 448, width: 480, height: 154 },
 ]
 
 const STATE_LABELS: Record<OfficeAgentState, string> = {
@@ -79,6 +80,24 @@ const ROLE_MARKS: Record<AgentWorkRole, string> = {
   analyst: '▥',
   specialist: '★',
 }
+
+interface StandbyAgentDefinition {
+  id: string
+  name: string
+  role: AgentWorkRole
+  model?: string
+  avatar: 'terra' | 'luna' | 'generated'
+  room: RoomId
+  x: number
+  y: number
+}
+
+/** Decorative, non-observed positions shown only while no session is active. */
+const STANDBY_AGENTS: readonly StandbyAgentDefinition[] = [
+  { id: 'standby-terra', name: 'Terra', role: 'orchestrator', model: 'Terra', avatar: 'terra', room: 'entrance', x: 82, y: 124 },
+  { id: 'standby-luna', name: 'Luna', role: 'researcher', model: 'Luna', avatar: 'luna', room: 'meetings', x: 372, y: 124 },
+  { id: 'standby-specialist', name: 'Especialista', role: 'specialist', avatar: 'generated', room: 'library', x: 638, y: 124 },
+]
 
 function roomForZone(zone: OfficeZone): RoomId {
   switch (zone) {
@@ -187,6 +206,7 @@ export function OfficeView({
     [projection, suppliedEdges, placementById],
   )
   const selected = selectedAgentId ? placementById.get(selectedAgentId)?.agent ?? null : null
+  const showStandby = agents.length === 0 && !search.trim() && stateFilter === 'all' && roleFilter === 'all'
   const roomCounts = useMemo(() => {
     const counts = new Map<RoomId, number>()
     for (const placement of placements) counts.set(placement.room.id, (counts.get(placement.room.id) ?? 0) + 1)
@@ -223,7 +243,11 @@ export function OfficeView({
   return (
     <section className={[styles.office, className].filter(Boolean).join(' ')} aria-label={ariaLabel}>
       <div className={styles.srOnly} aria-live="polite">
-        {selected ? `${visibleName(selected)}: ${STATE_LABELS[selected.state]}` : `${visibleAgents.length} agentes visibles de ${agents.length}`}
+        {selected
+          ? `${visibleName(selected)}: ${STATE_LABELS[selected.state]}`
+          : showStandby
+            ? 'No hay una sesión activa. Tres agentes preparados aparecen en la sala de espera.'
+            : `${visibleAgents.length} agentes visibles de ${agents.length}`}
       </div>
 
       <div className={styles.officeToolbar} aria-label="Controles de oficina">
@@ -271,6 +295,7 @@ export function OfficeView({
                 key={room.id}
                 style={{ '--room-x': room.x, '--room-y': room.y, '--room-w': room.width, '--room-h': room.height } as CSSProperties}
               >
+                <span className={styles.roomIcon} aria-hidden="true">{room.icon}</span>
                 <span className={styles.roomLabel}>{room.label}</span>
                 <span className={styles.roomHint}>{room.hint}</span>
                 <span className={styles.roomCount}>{roomCounts.get(room.id) ?? 0}</span>
@@ -315,10 +340,19 @@ export function OfficeView({
               />
             ))}
           </div>
-          {visibleAgents.length === 0 && (
+          {showStandby && (
+            <div className={styles.standbyLayer} aria-label="Agentes preparados en espera">
+              {STANDBY_AGENTS.map(standby => <StandbyAgent definition={standby} key={standby.id} />)}
+              <div className={styles.waitingBanner} role="status">
+                <strong>Sala de espera</strong>
+                <span>Agentes preparados para entrar en acción</span>
+              </div>
+            </div>
+          )}
+          {visibleAgents.length === 0 && !showStandby && (
             <div className={styles.emptyState} role="status">
-              <strong>{agents.length === 0 ? 'Oficina en espera' : 'Ningún agente coincide'}</strong>
-              <span>{agents.length === 0 ? 'Cuando arranque una sesión aparecerán aquí.' : 'Cambia o limpia los filtros para volver a ver agentes.'}</span>
+              <strong>Ningún agente coincide</strong>
+              <span>Cambia o limpia los filtros para volver a ver agentes.</span>
             </div>
           )}
         </div>
@@ -327,22 +361,25 @@ export function OfficeView({
       <div className={styles.officeLegend} aria-label="Leyenda de oficina">
         <span><i data-tone="active" /> Activo</span>
         <span><i data-tone="waiting" /> Permiso</span>
+        <span><i data-tone="standby" /> En espera</span>
         <span><i data-tone="blocked" /> Bloqueado</span>
         <span><i data-tone="complete" /> Completado</span>
         <span className={styles.connectionCount}>{hierarchy.length} conexiones</span>
       </div>
 
-      <div className={styles.mobileList} aria-label="Lista de agentes">
-        {placements.map(({ agent, room }) => (
-          <OfficeAgent
-            agent={agent}
-            isSelected={selectedAgentId === agent.id}
-            key={agent.id}
-            onKeyDown={handleAgentKeyDown}
-            onSelect={onSelectAgent}
-            room={room}
-          />
-        ))}
+      <div className={styles.mobileList} aria-label={showStandby ? 'Agentes en espera' : 'Lista de agentes'}>
+        {showStandby
+          ? STANDBY_AGENTS.map(standby => <StandbyAgent definition={standby} key={standby.id} mobile />)
+          : placements.map(({ agent, room }) => (
+            <OfficeAgent
+              agent={agent}
+              isSelected={selectedAgentId === agent.id}
+              key={agent.id}
+              onKeyDown={handleAgentKeyDown}
+              onSelect={onSelectAgent}
+              room={room}
+            />
+          ))}
       </div>
 
       {selected && (
@@ -360,6 +397,41 @@ export function OfficeView({
         </aside>
       )}
     </section>
+  )
+}
+
+interface StandbyAgentProps {
+  definition: StandbyAgentDefinition
+  mobile?: boolean
+}
+
+function StandbyAgent({ definition, mobile = false }: StandbyAgentProps) {
+  const roleLabel = agentWorkRoleLabel(definition.role)
+  const familyLabel = modelFamilyLabel(definition.model)
+  const roleMark = ROLE_MARKS[definition.role]
+  const className = [styles.agent, styles.standbyAgent, mobile ? styles.standbyMobile : ''].filter(Boolean).join(' ')
+  return (
+    <div
+      aria-label={`${definition.name}, ${roleLabel}, En espera`}
+      className={className}
+      data-avatar={definition.avatar}
+      data-avatar-key={definition.id}
+      data-role={definition.role}
+      data-state="idle"
+      role="img"
+      style={{ '--agent-x': `${definition.x / 10}%`, '--agent-y': `${definition.y / 6.3}%`, '--avatar-hue': avatarHue(definition.id) } as CSSProperties}
+      title={`${definition.name} · En espera`}
+    >
+      <span className={styles.avatar} aria-hidden="true">
+        <span className={styles.hair} />
+        <span className={styles.face}>{initials(definition.name)}</span>
+        <span className={styles.body} />
+        <span className={styles.avatarAccessory}>{roleMark}</span>
+      </span>
+      <span className={styles.agentName}>{definition.name}</span>
+      <span className={styles.roleBadge}><span aria-hidden="true">{roleMark}</span>{roleLabel}{familyLabel ? ` · ${familyLabel}` : ''}</span>
+      <span className={styles.stateBadge}><span aria-hidden="true">…</span>En espera</span>
+    </div>
   )
 }
 

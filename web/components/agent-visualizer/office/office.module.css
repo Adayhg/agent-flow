@@ -51,11 +51,13 @@
 .officeLegend span { display: inline-flex; align-items: center; gap: 5px; }
 .officeLegend i { width: 8px; height: 8px; border-radius: 50%; background: #3c72b7; }
 .officeLegend i[data-tone="waiting"] { background: #bf7b22; }
+.officeLegend i[data-tone="standby"] { background: #bf7b22; border: 1px dashed #fff; box-shadow: 0 0 0 1px #bf7b22; }
 .officeLegend i[data-tone="blocked"] { background: #bd4f54; }
 .officeLegend i[data-tone="complete"] { background: #2f8d61; }
 .connectionCount { margin-left: auto; color: #536179; font-weight: 800; }
 
 .room {
+  --room-accent: #7e9b9a;
   position: absolute;
   left: calc(var(--room-x) * 0.1%);
   top: calc(var(--room-y) / 6.3 * 1%);
@@ -71,6 +73,7 @@
   box-shadow: 0 5px 0 #c5baa9, 0 10px 15px rgba(48, 57, 71, .12);
 }
 
+.room::before { position: absolute; z-index: 0; top: 0; right: 0; left: 0; height: 8px; border-radius: 6px 6px 0 0; background: var(--room-accent); box-shadow: 0 2px 0 color-mix(in srgb, var(--room-accent) 40%, white); content: ''; opacity: .72; }
 .room::after {
   position: absolute;
   right: 8%;
@@ -84,20 +87,45 @@
   box-shadow: -9px -8px 0 -3px #6f9d75, -9px -8px 0 -1px rgba(49, 86, 58, .5);
 }
 
-.roomLabel, .roomHint { position: absolute; left: 10px; z-index: 1; }
-.roomLabel { top: 9px; color: #6f5d48; font-size: clamp(9px, 1vw, 13px); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
-.roomHint { top: 26px; color: #887b6c; font-size: clamp(7px, .75vw, 10px); }
+.roomIcon { position: absolute; z-index: 1; top: 10px; left: 9px; display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid color-mix(in srgb, var(--room-accent) 55%, #ffffff); border-radius: 6px; background: color-mix(in srgb, var(--room-accent) 18%, #ffffff); color: color-mix(in srgb, var(--room-accent) 82%, #25334d); font-size: 11px; font-weight: 900; }
+.roomLabel, .roomHint { position: absolute; left: 34px; z-index: 1; }
+.roomLabel { top: 10px; color: #6f5d48; font-size: clamp(9px, 1vw, 13px); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.roomHint { top: 29px; color: #887b6c; font-size: clamp(7px, .75vw, 10px); }
 .roomCount { position: absolute; z-index: 1; top: 8px; right: 8px; min-width: 18px; padding: 2px 5px; border-radius: 999px; background: rgba(99, 83, 62, .13); color: #6f5d48; font-size: 9px; font-weight: 900; text-align: center; }
 .roomFurniture { position: absolute; left: 11%; bottom: 10%; width: 30%; height: 17%; border: 2px solid rgba(116, 91, 67, .55); border-radius: 4px; background: rgba(164, 125, 84, .18); }
+.roomFurniture::before { position: absolute; right: 12%; bottom: 100%; width: 22%; height: 55%; border: 1px solid rgba(79, 109, 84, .55); border-bottom: 0; border-radius: 50% 50% 0 0; background: rgba(110, 160, 117, .35); content: ''; }
+.roomFurniture::after { position: absolute; right: -10%; bottom: -8px; width: 38%; height: 5px; border-radius: 50%; background: rgba(77, 86, 96, .18); content: ''; }
+.room_entrance { --room-accent: #5e9ba8; }
+.room_meetings { --room-accent: #aa8b5f; }
+.room_library { --room-accent: #7086b6; }
+.room_lab { --room-accent: #5b9ca5; }
+.room_desks { --room-accent: #c28b5c; }
+.room_decisions { --room-accent: #9b76bc; }
+.room_incidents { --room-accent: #bf6d5f; }
+.room_deliveries { --room-accent: #6eaa7a; }
 .room_meetings .roomFurniture { width: 50%; left: 25%; border-radius: 50%; }
 .room_library .roomFurniture { width: 48%; height: 23%; border-radius: 2px; box-shadow: inset 0 4px #c29368, inset 0 8px #7991ae, inset 0 12px #bb7c71; }
 .room_lab .roomFurniture { background: rgba(119, 181, 191, .18); }
+.room_lab .roomFurniture::before { right: 18%; width: 25%; height: 80%; border-radius: 45% 45% 20% 20%; background: rgba(89, 161, 177, .35); }
+.room_desks .roomFurniture { width: 25%; height: 14%; }
+.room_decisions .roomFurniture { width: 55%; left: 22%; border-radius: 50%; }
+.room_incidents .roomFurniture { width: 34%; border-color: rgba(174, 91, 79, .58); background: rgba(218, 139, 114, .18); }
+.room_deliveries .roomFurniture { width: 35%; left: 32%; border-color: rgba(81, 132, 89, .55); background: rgba(126, 183, 131, .2); }
 .room_incidents { background: linear-gradient(135deg, #fff7e9, #f6e7dc); }
 .room_decisions { background: linear-gradient(135deg, #f7efff, #ebe2f7); }
 .room_deliveries { background: linear-gradient(135deg, #eff8ef, #e3f0e3); }
 
 .edge { fill: none; stroke: #7766a9; stroke-dasharray: 5 5; stroke-linecap: round; stroke-width: 1.7; animation: office-dash 1.8s linear infinite; }
 .edgeArrow { fill: #7766a9; }
+.standbyLayer { position: absolute; z-index: 4; inset: 0; pointer-events: none; }
+.standbyAgent { cursor: default; opacity: .9; filter: saturate(.74); }
+.standbyAgent:hover { transform: translate(-50%, -50%); filter: saturate(.82); }
+.standbyAgent .avatar { animation: office-standby 2.8s ease-in-out infinite; }
+.standbyAgent .avatar::after { background: #bf7b22; animation: office-standby-dot 1.8s ease-in-out infinite; }
+.standbyAgent .stateBadge { border-style: dashed; }
+.waitingBanner { position: absolute; z-index: 7; right: 18px; bottom: 14px; display: grid; gap: 2px; max-width: 210px; padding: 7px 10px; border: 1px solid rgba(191, 123, 34, .3); border-radius: 8px; background: rgba(255, 250, 235, .86); color: #76541f; box-shadow: 0 4px 12px rgba(93, 74, 41, .1); }
+.waitingBanner strong { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.waitingBanner span { font-size: 10px; }
 
 .agent {
   --accent: #3c72b7;
@@ -190,6 +218,8 @@
   .mobileList .agentName { align-self: end; font-size: 12px; }
   .mobileList .roleBadge { align-self: start; margin-top: 1px; }
   .mobileList .stateBadge { grid-column: 2; align-self: start; margin-top: 1px; }
+  .mobileList .standbyAgent { opacity: .88; }
+  .mobileList .standbyAgent:hover { transform: translateY(-1px); }
   .detail { position: relative; right: auto; bottom: auto; width: auto; margin-top: 9px; }
   .officeLegend { border: 1px solid rgba(67, 75, 96, .22); border-top: 0; border-radius: 0 0 12px 12px; }
 }
@@ -202,3 +232,5 @@
 @keyframes office-work { 50% { transform: translateY(-2px) rotate(1deg); } }
 @keyframes office-wobble { 25% { transform: translateX(-2px) rotate(-2deg); } 75% { transform: translateX(2px) rotate(2deg); } }
 @keyframes office-alert { 50% { transform: scale(1.35); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); } }
+@keyframes office-standby { 50% { transform: translateY(-2px); } }
+@keyframes office-standby-dot { 50% { opacity: .48; } }
