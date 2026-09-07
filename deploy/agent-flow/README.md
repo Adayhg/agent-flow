@@ -6,6 +6,8 @@ checkout is only a development/review source; the runtime lives on the VPS.
 ## Runtime contract
 
 - App root: `/home/discanary/apps/agent-flow-office`
+- Watch root: `/home/discanary` so new Claude/Codex sessions and their subagents
+  under the VPS user's workspaces are incorporated automatically.
 - Private web listener: `172.17.0.1:8612` (kept separate from the existing Mantenimiento service on `8610`)
 - Private SSE relay: `172.17.0.1:3001`
 - Public path: `/agent-flow/` on the already authenticated launcher host
