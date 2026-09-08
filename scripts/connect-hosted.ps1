@@ -7,6 +7,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $Workspace) { $Workspace = $repoRoot }
+$nodeCommand = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+if (-not $nodeCommand -and (Test-Path -LiteralPath 'C:\Program Files\nodejs\node.exe')) {
+  $nodeCommand = 'C:\Program Files\nodejs\node.exe'
+}
+if (-not $nodeCommand) { throw 'No encuentro Node.js. Instala Node.js LTS o añádelo al PATH.' }
 $remoteUrl = 'https://launcher.104-248-32-222.sslip.io/agent-flow/ingest'
 $sshKey = if ($env:AGENT_FLOW_VPS_KEY) { $env:AGENT_FLOW_VPS_KEY } else { 'C:\Users\aday_\.ssh\id_ed25519_vps' }
 $remoteTokenFile = '/home/discanary/apps/agent-flow-office/.relay.env'
@@ -35,7 +40,9 @@ $env:AGENT_FLOW_HOST_ID = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { 'w
 
 Push-Location -LiteralPath $repoRoot
 try {
-  & pnpm run connect:hosted
+  & $nodeCommand scripts/build-forwarder.js
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $nodeCommand scripts/.remote-forwarder.js
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {
