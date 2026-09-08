@@ -68,6 +68,11 @@ bounded role/model/tool metadata. Prompts, file paths, arguments, tool results,
 and task text are removed before the HTTP request is made. If the bridge is
 not running, the hosted Office continues to show VPS sessions normally.
 
+For a launcher-style workflow, double-click `open-agent-flow-office.cmd` in the
+repository root. It opens the hosted PWA and starts one bridge instance; a
+second click reuses the existing connection. Run `stop-agent-flow-office.ps1`
+when local sessions should stop being forwarded.
+
 ## Expected response
 
 The relay returns `202` with the number of accepted events. Duplicate events

@@ -111,6 +111,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\connect-hosted.ps1
 
 Stop it with `Ctrl+C` when local sessions no longer need to be shown.
 
+For a one-click launch, double-click `open-agent-flow-office.cmd` in the
+repository root. It opens the hosted PWA and starts the temporary bridge; use
+`stop-agent-flow-office.ps1` to disconnect it.
+
 The production units, reverse-proxy locations, PWA manifest, and network-only
 service worker are in [`deploy/agent-flow/`](deploy/agent-flow/). Keep the
 private web and relay listeners behind the launcher's existing authentication;

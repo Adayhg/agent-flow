@@ -8,6 +8,8 @@
  * Ctrl+C; no Windows service or scheduled task is installed.
  */
 import * as os from 'os'
+import * as fs from 'fs'
+import * as path from 'path'
 import { createRelay, RelayLifecycleEvent } from './relay'
 import { AgentEvent } from '../extension/src/protocol'
 
@@ -60,6 +62,7 @@ const HOST_ID = process.env.AGENT_FLOW_HOST_ID || os.hostname()
 const RUNTIME = process.env.AGENT_FLOW_RUNTIME === 'claude' || process.env.AGENT_FLOW_RUNTIME === 'codex'
   ? process.env.AGENT_FLOW_RUNTIME
   : 'unknown'
+const LOCK_PATH = path.join(os.tmpdir(), 'agent-flow-hosted-bridge.lock')
 
 if (!TOKEN) {
   console.error('Missing AGENT_FLOW_INGEST_TOKEN. Use the hosted launcher so the token is obtained without printing it.')
@@ -110,6 +113,33 @@ function sendLifecycle(event: RelayLifecycleEvent): void {
 }
 
 async function main(): Promise<void> {
+  let lockOwned = false
+  try {
+    const lock = fs.openSync(LOCK_PATH, 'wx')
+    fs.writeFileSync(lock, `${process.pid}\n`, 'utf8')
+    fs.closeSync(lock)
+    lockOwned = true
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      const existingPid = Number.parseInt(fs.readFileSync(LOCK_PATH, 'utf8').trim(), 10)
+      let running = false
+      if (Number.isInteger(existingPid) && existingPid > 0) {
+        try { process.kill(existingPid, 0); running = true } catch { /* stale lock */ }
+      }
+      if (running) {
+        console.log('[agent-flow] hosted bridge ya está conectado')
+        return
+      }
+      try { fs.unlinkSync(LOCK_PATH) } catch { /* retry below */ }
+      const lock = fs.openSync(LOCK_PATH, 'wx')
+      fs.writeFileSync(lock, `${process.pid}\n`, 'utf8')
+      fs.closeSync(lock)
+      lockOwned = true
+    } else {
+      throw error
+    }
+  }
+
   const workspace = process.env.AGENT_FLOW_WORKSPACE || process.cwd()
   const watchAll = process.env.AGENT_FLOW_WATCH_ALL !== '0'
   const relay = await createRelay({
@@ -140,6 +170,9 @@ async function main(): Promise<void> {
     acceptEvents = false
     relay.dispose()
     await chain
+    if (lockOwned) {
+      try { fs.unlinkSync(LOCK_PATH) } catch { /* another instance may own it */ }
+    }
     process.exit(0)
   }
   process.once('SIGINT', cleanup)
