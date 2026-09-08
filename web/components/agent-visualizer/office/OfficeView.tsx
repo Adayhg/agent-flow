@@ -208,6 +208,7 @@ export function OfficeView({
   }, [agents, roleFilter, search, stateFilter])
   const placements = useMemo(() => placeAgents(visibleAgents), [visibleAgents])
   const placementById = useMemo(() => new Map(placements.map(placement => [placement.agent.id, placement])), [placements])
+  const sessionCount = useMemo(() => new Set(agents.map(agent => agent.sessionLabel).filter(Boolean)).size, [agents])
   const hierarchy = useMemo(
     () => (projection?.edges ?? suppliedEdges ?? []).filter(edge => placementById.has(edge.parentId) && placementById.has(edge.childId)),
     [projection, suppliedEdges, placementById],
@@ -258,6 +259,9 @@ export function OfficeView({
       </div>
 
       <div className={styles.officeToolbar} aria-label="Controles de oficina">
+        <span className={styles.scopeBadge} aria-label="Ámbito de la oficina">
+          {sessionCount > 1 ? `Todas las sesiones · ${sessionCount}` : 'Vista global'}
+        </span>
         <label className={styles.filterField}>
           <span>Buscar</span>
           <input
@@ -394,6 +398,7 @@ export function OfficeView({
           </div>
           <span>{STATE_LABELS[selected.state]}</span>
           <span className={styles.zoneLabel}>Zona: {ROOMS.find(room => room.id === roomForAgent(selected))?.label}</span>
+          {selected.sessionLabel && <span className={styles.sourceName}>Sesión: {selected.sessionLabel}</span>}
           {selected.workLabel && selected.name !== selected.workLabel && <span className={styles.sourceName}>Origen: {selected.name}</span>}
           {selected.model && <span className={styles.modelName}>{selected.model}</span>}
           <code className={styles.agentId}>{selected.id}</code>
@@ -458,7 +463,7 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
   return (
     <button
       aria-pressed={isSelected}
-      aria-label={`${name}, ${roleLabel}${familyLabel ? `, ${familyLabel}` : ''}, ${stateLabel}, ${room.label}`}
+      aria-label={`${name}, ${roleLabel}${familyLabel ? `, ${familyLabel}` : ''}, ${stateLabel}, ${room.label}${agent.sessionLabel ? `, ${agent.sessionLabel}` : ''}`}
       className={styles.agent}
       data-role={agent.workRole ?? 'specialist'}
       data-room={room.id}
@@ -468,7 +473,7 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
       onClick={() => onSelect?.(agent.id)}
       onKeyDown={event => onKeyDown(event, agent.id)}
       style={{ ...style, '--avatar-hue': avatarHue(agent.avatar.key) } as CSSProperties}
-      title={`${name} · ${stateLabel}`}
+      title={`${name} · ${stateLabel}${agent.sessionLabel ? ` · ${agent.sessionLabel}` : ''}`}
       type="button"
     >
       <span className={styles.avatar} aria-hidden="true">
@@ -480,6 +485,7 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
       <span className={styles.agentName}>{name}</span>
       <span className={styles.roleBadge}><span aria-hidden="true">{roleMark}</span>{roleLabel}{familyLabel ? ` · ${familyLabel}` : ''}</span>
       <span className={styles.stateBadge}><span aria-hidden="true">{stateMark}</span>{stateLabel}</span>
+      {agent.sessionLabel && <span className={styles.sessionBadge}>{agent.sessionLabel}</span>}
     </button>
   )
 }

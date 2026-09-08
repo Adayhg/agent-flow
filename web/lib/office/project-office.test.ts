@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { officeAgentId, projectOffice, projectOfficeGraph } from './project-office'
+import { mergeOfficeProjections, officeAgentId, projectOffice, projectOfficeGraph } from './project-office'
 import type { Agent, Edge } from '../agent-types'
 import type { OfficeEvent } from './types'
 
@@ -55,6 +55,17 @@ test('same agent name in separate sessions has separate identities', () => {
 
   assert.equal(projection.agents.size, 2)
   assert.notEqual(officeAgentId('session-a', 'worker'), officeAgentId('session-b', 'worker'))
+})
+
+test('merges session projections without collapsing same-name agents', () => {
+  const merged = mergeOfficeProjections([
+    projectOffice([event('agent_spawn', { name: 'worker' }, 1, 'session-a')]),
+    projectOffice([event('agent_spawn', { name: 'worker' }, 1, 'session-b')]),
+  ])
+
+  assert.equal(merged.agents.size, 2)
+  assert.equal(merged.agents.get(officeAgentId('session-a', 'worker'))?.sessionId, 'session-a')
+  assert.equal(merged.agents.get(officeAgentId('session-b', 'worker'))?.sessionId, 'session-b')
 })
 
 test('does not claim a parent until the parent itself is observed', () => {

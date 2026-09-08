@@ -25,7 +25,7 @@ import { MessageFeedPanel } from "./message-feed-panel"
 import { TopBar } from "./top-bar"
 import { useAudioEffects } from "@/hooks/use-audio-effects"
 import { OfficeView } from "./office"
-import { officeAgentId, projectOfficeGraph } from "@/lib/office"
+import { mergeOfficeProjections, officeAgentId, projectOffice, projectOfficeGraph } from "@/lib/office"
 
 type VisualizerMode = 'office' | 'graph'
 
@@ -69,18 +69,50 @@ export function AgentVisualizer() {
 
   const [viewMode, setViewMode] = useState<VisualizerMode>('office')
 
-  // Office uses a privacy-scoped projection, while graph selection remains
-  // keyed by the original simulation agent IDs.
-  const officeProjection = useMemo(() => projectOfficeGraph({
-    sessionId: bridge.selectedSessionId ?? undefined,
-    agents: agents.values(),
-    edges,
-  }), [bridge.selectedSessionId, agents, edges])
   const officeSessions = useMemo(() => bridge.sessions.map(session => ({
     ...session,
     // Session labels may be prompt-derived. Office exposes only a short ID.
-    label: `Session ${session.id.slice(0, 8) || 'unknown'}`,
+    label: `Sesión ${session.id.slice(0, 8) || 'desconocida'}`,
   })), [bridge.sessions])
+  const officeSessionLabels = useMemo(() => new Map(
+    officeSessions.map(session => [session.id, session.label]),
+  ), [officeSessions])
+
+  // Office is an aggregate view: it keeps every session visible while the
+  // Graph view and its controls remain scoped to the selected session.
+  const officeProjection = useMemo(() => {
+    const projections = Array.from(bridge.sessionEvents.values(), events => projectOffice(events))
+    if (agents.size > 0 || projections.length === 0) {
+      projections.push(projectOfficeGraph({
+        sessionId: bridge.selectedSessionId ?? undefined,
+        agents: agents.values(),
+        edges,
+      }))
+    }
+    const merged = mergeOfficeProjections(projections)
+    const labelledAgents = new Map(Array.from(merged.agents, ([id, agent]) => {
+      const sessionLabel = agent.sessionId && agent.sessionId !== 'default-session'
+        ? officeSessionLabels.get(agent.sessionId) ?? `Sesión ${agent.sessionId.slice(0, 8)}`
+        : undefined
+      return [id, sessionLabel ? { ...agent, sessionLabel } : agent] as const
+    }))
+    return { ...merged, agents: labelledAgents }
+  }, [agents, bridge.selectedSessionId, bridge.sessionEvents, edges, officeSessionLabels])
+
+  // Office selection can jump to another session before selecting its agent in
+  // the graph, after the session cache has been restored.
+  const pendingOfficeSelectionRef = useRef<{ sessionId: string; sourceAgentId: string } | null>(null)
+  const officeAgentOrigins = useMemo(() => {
+    const origins = new Map<string, { sessionId: string | null; sourceAgentId: string }>()
+    for (const agent of officeProjection.agents.values()) {
+      if (!agent.sourceAgentId) continue
+      origins.set(agent.id, {
+        sessionId: agent.sessionId === 'default-session' ? null : (agent.sessionId ?? null),
+        sourceAgentId: agent.sourceAgentId,
+      })
+    }
+    return origins
+  }, [officeProjection])
   const officeToGraphAgentId = useMemo(() => {
     const mapping = new Map<string, string>()
     for (const graphAgentId of agents.keys()) {
@@ -92,9 +124,24 @@ export function AgentVisualizer() {
     ? officeAgentId(bridge.selectedSessionId ?? undefined, selection.selectedAgentId)
     : null
   const handleOfficeAgentSelect = useCallback((officeId: string) => {
-    const graphAgentId = officeToGraphAgentId.get(officeId)
-    if (graphAgentId) selection.handleAgentClick(graphAgentId)
-  }, [officeToGraphAgentId, selection.handleAgentClick])
+    const origin = officeAgentOrigins.get(officeId)
+    if (!origin) return
+    const targetSessionId = origin.sessionId
+    if (targetSessionId && targetSessionId !== bridge.selectedSessionId) {
+      pendingOfficeSelectionRef.current = { sessionId: targetSessionId, sourceAgentId: origin.sourceAgentId }
+      bridge.selectSession(targetSessionId)
+      return
+    }
+    const graphAgentId = officeToGraphAgentId.get(officeId) ?? origin.sourceAgentId
+    if (agents.has(graphAgentId)) selection.handleAgentClick(graphAgentId)
+  }, [agents, bridge, officeAgentOrigins, officeToGraphAgentId, selection.handleAgentClick])
+
+  useEffect(() => {
+    const pending = pendingOfficeSelectionRef.current
+    if (!pending || pending.sessionId !== bridge.selectedSessionId || !agents.has(pending.sourceAgentId)) return
+    pendingOfficeSelectionRef.current = null
+    selection.handleAgentClick(pending.sourceAgentId)
+  }, [agents, bridge.selectedSessionId, selection.handleAgentClick])
 
   const [showStats, setShowStats] = useState(false)
   const [showHexGrid, setShowHexGrid] = useState(true)
@@ -482,7 +529,7 @@ export function AgentVisualizer() {
         onCloseSession={handleCloseSession}
         isVSCode={bridge.isVSCode}
         connectionStatus={bridge.connectionStatus}
-        agentCount={agents.size}
+        agentCount={viewMode === 'office' ? officeProjection.agents.size : agents.size}
         totalTokens={totalTokens}
         showFileAttention={showFileAttention}
         showTranscript={showTranscript}

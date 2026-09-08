@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { vscodeBridge, type ConnectionStatus, type AgentEvent, type SessionInfo } from '@/lib/vscode-bridge'
 import { SimulationEvent } from '@/lib/agent-types'
 
@@ -27,6 +27,8 @@ interface BridgeHookResult {
   flushSessionEvents: (sessionId: string, fromIndex?: number) => void
   /** Get the current event count for a session (for save/restore) */
   getSessionEventCount: (sessionId: string) => number
+  /** Read-only snapshots of every session event buffer for aggregate views. */
+  sessionEvents: ReadonlyMap<string, readonly SimulationEvent[]>
   /** Ref to the currently selected session ID — updated synchronously, not via React state */
   selectedSessionIdRef: React.RefObject<string | null>
   /** Session IDs that have received events while not selected */
@@ -51,7 +53,7 @@ export function useVSCodeBridge(): BridgeHookResult {
   )
   const [disable1MContext, setDisable1MContext] = useState(false)
   const pendingEventsRef = useRef<SimulationEvent[]>([])
-  const [, setEventVersion] = useState(0) // trigger re-render on new events
+  const [eventVersion, setEventVersion] = useState(0) // trigger re-render on new events
 
   // Session state
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -129,13 +131,16 @@ export function useVSCodeBridge(): BridgeHookResult {
         sessionEventsRef.current.set(event.sessionId, buf)
       }
 
+      // Aggregate Office projections need to refresh for background sessions as
+      // well as the currently selected one.
+      setEventVersion(v => v + 1)
+
       // Deliver to pending if session matches (ref is always current).
       // Skip if a session switch is pending — useLayoutEffect will flush
       // from the session buffer once the simulation state is swapped.
       const selected = selectedSessionIdRef.current
       if (selected && event.sessionId === selected && !sessionSwitchPendingRef.current) {
         pendingEventsRef.current.push(simEvent)
-        setEventVersion(v => v + 1)
       } else if (event.sessionId && event.sessionId !== selected) {
         // Track background activity for unselected sessions
         setSessionsWithActivity(prev => {
@@ -282,6 +287,14 @@ export function useVSCodeBridge(): BridgeHookResult {
     return sessionEventsRef.current.get(sessionId)?.length ?? 0
   }, [])
 
+  const sessionEvents = useMemo(() => {
+    const snapshot = new Map<string, readonly SimulationEvent[]>()
+    for (const [sessionId, events] of sessionEventsRef.current) {
+      snapshot.set(sessionId, events.slice())
+    }
+    return snapshot
+  }, [eventVersion, sessions, sessionsWithActivity])
+
   const dismissedSessionsRef = useRef<Map<string, SessionInfo>>(new Map())
 
   const removeSession = useCallback((sessionId: string) => {
@@ -316,6 +329,7 @@ export function useVSCodeBridge(): BridgeHookResult {
     selectSession,
     flushSessionEvents,
     getSessionEventCount,
+    sessionEvents,
     sessionsWithActivity,
     removeSession,
   }

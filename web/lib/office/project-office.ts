@@ -88,6 +88,8 @@ function ensureAgent(state: MutableOfficeState, sessionId: string, sourceAgentId
 
   const agent: OfficeAgent = {
     id,
+    sessionId,
+    sourceAgentId,
     name: displayName(sourceAgentId),
     parentId: null,
     state: 'unknown',
@@ -408,4 +410,15 @@ export function projectOfficeGraph(source: OfficeGraphSource, options: OfficePro
   for (const edge of source.edges) applyGraphEdge(state, sessionId, edge)
 
   return projectionFromState(state, options, newestEventTime)
+}
+
+/** Merge independent session projections into one deterministic office view. */
+export function mergeOfficeProjections(projections: readonly OfficeProjection[]): OfficeProjection {
+  const agents = new Map<string, OfficeAgent>()
+  const edges = new Map<string, OfficeEdge>()
+  for (const projection of projections) {
+    for (const [id, agent] of projection.agents) agents.set(id, agent)
+    for (const edge of projection.edges) edges.set(edge.id, edge)
+  }
+  return { agents, edges: [...edges.values()].sort((a, b) => a.id.localeCompare(b.id)) }
 }

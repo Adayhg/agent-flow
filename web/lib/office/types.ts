@@ -30,6 +30,12 @@ export interface OfficeAvatar {
 export interface OfficeAgent {
   /** Opaque, deterministic ID scoped to sessionId + source agent ID. */
   id: string
+  /** Opaque source session identifier used to keep aggregate views navigable. */
+  sessionId?: string
+  /** Short UI label for the source session; prompt text is never copied here. */
+  sessionLabel?: string
+  /** Source identifier used only to route a selection back to the graph. */
+  sourceAgentId?: string
   /** A short label only. Task text, messages and tool arguments are excluded. */
   name: string
   /** Fixed-vocabulary semantic role, never the original prompt. */

@@ -1,4 +1,4 @@
-export { officeAgentId, projectOffice, projectOfficeGraph } from './project-office'
+export { mergeOfficeProjections, officeAgentId, projectOffice, projectOfficeGraph } from './project-office'
 export type {
   OfficeAgent,
   OfficeAgentState,
