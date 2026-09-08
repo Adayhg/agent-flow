@@ -137,6 +137,39 @@ test('hydrates a previously unknown agent without regressing a newer state', () 
   assert.equal(worker?.avatar.family, 'terra')
 })
 
+test('routes each evidenced activity to the corresponding office state', () => {
+  const workerId = officeAgentId('session-a', 'worker')
+  const stateAfter = (events: OfficeEvent[]) => projectOffice(events).agents.get(workerId)?.state
+  const spawn = event('agent_spawn', { name: 'worker' }, 1)
+
+  assert.equal(stateAfter([spawn]), 'planning')
+  assert.equal(stateAfter([spawn, event('tool_call_start', { agent: 'worker', tool: 'grep' }, 2)]), 'researching')
+  assert.equal(stateAfter([
+    spawn,
+    event('tool_call_start', { agent: 'worker', tool: 'grep' }, 2),
+    event('tool_call_end', { agent: 'worker', tool: 'grep' }, 3),
+  ]), 'idle')
+  assert.equal(stateAfter([
+    spawn,
+    event('tool_call_start', { agent: 'worker', tool: 'apply_patch' }, 2),
+    event('context_update', { agent: 'worker', tokens: 42 }, 3),
+  ]), 'editing')
+  assert.equal(stateAfter([spawn, event('permission_requested', { agent: 'worker' }, 2)]), 'waiting_approval')
+  assert.equal(stateAfter([spawn, event('error', { agent: 'worker' }, 2)]), 'blocked')
+  assert.equal(stateAfter([spawn, event('agent_complete', { name: 'worker' }, 2)]), 'completed')
+})
+
+test('routes delegated children through planning before they become idle', () => {
+  const childId = officeAgentId('session-a', 'child')
+  const projection = projectOffice([
+    event('agent_spawn', { name: 'parent', isMain: true }, 1),
+    event('agent_spawn', { name: 'child' }, 2),
+    event('subagent_dispatch', { parent: 'parent', child: 'child' }, 3),
+    event('subagent_return', { parent: 'parent', child: 'child' }, 4),
+  ])
+  assert.equal(projection.agents.get(childId)?.state, 'idle')
+})
+
 test('adapts graph agents and only joins a parent when a parent-child edge exists', () => {
   const parent: Agent = {
     id: 'parent', name: 'Parent', state: 'idle', parentId: null,

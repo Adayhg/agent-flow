@@ -156,7 +156,9 @@ function stateForTool(tool: string): OfficeAgentState {
 
 function stateForThinking(content: unknown): OfficeAgentState {
   const normalized = text(content)?.toLowerCase()
-  if (!normalized) return 'unknown'
+  // A thinking event without text is still evidence that the agent is
+  // planning; remote privacy filtering intentionally removes the text.
+  if (!normalized) return 'planning'
   if (/(blocked|failed|failure|error)/.test(normalized)) return 'blocked'
   if (/(approval|permission|approve)/.test(normalized)) return 'waiting_approval'
   if (/(planning|plan |planing)/.test(normalized)) return 'planning'
@@ -205,6 +207,10 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
       changes.workRole = workRole
       changes.workLabel = formatAgentWorkLabel(workRole, model || agent.model)
       if (Object.keys(changes).length) replaceAgent(state, agent, changes)
+      // A newly observed agent is preparing its work before the first tool or
+      // delegation event gives us a more specific room.
+      const currentAgent = state.agents.get(agent.id) ?? agent
+      if (currentAgent.state === 'unknown') setState(state, currentAgent, 'planning', at)
       const parentSourceId = actor(payload, 'parent')
       if (parentSourceId) {
         recordParentEvidence(state, officeAgentId(sessionId, parentSourceId), agent.id, 'agent_spawn')
@@ -246,9 +252,10 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
     case 'tool_call_end': {
       const agent = eventAgent(state, sessionId, actor(payload, 'agent'), at)
       if (!agent) return
-      // Error status is explicit. A successful tool result alone does not tell
-      // us what the agent is doing next, so it returns to unknown.
-      setState(state, agent, payload.isError === true ? 'blocked' : 'unknown', at)
+      // Error status is explicit. A successful tool result means the agent is
+      // available for its next evidenced action, rather than still occupying
+      // the tool room or becoming an unclassified phantom.
+      setState(state, agent, payload.isError === true ? 'blocked' : 'idle', at)
       return
     }
 
@@ -262,7 +269,15 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
 
     case 'context_update': {
       const agent = eventAgent(state, sessionId, actor(payload, 'agent'), at)
-      if (agent) setState(state, agent, 'unknown', at)
+      // Context accounting is activity evidence, not a room assignment. Keep
+      // the last evidenced work zone while refreshing its timestamp.
+      if (agent && at >= agent.lastActivityAt) replaceAgent(state, agent, { lastActivityAt: at })
+      return
+    }
+
+    case 'error': {
+      const agent = eventAgent(state, sessionId, actor(payload, 'agent') || actor(payload, 'name'), at)
+      if (agent) setState(state, agent, 'blocked', at)
       return
     }
 
@@ -284,6 +299,7 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
       const parent = eventAgent(state, sessionId, actor(payload, 'parent'), at)
       const child = eventAgent(state, sessionId, actor(payload, 'child'), at)
       if (parent) setState(state, parent, 'planning', at)
+      if (child) setState(state, child, 'planning', at)
       if (parent && child) recordParentEvidence(state, parent.id, child.id, 'subagent_dispatch')
       return
     }
@@ -291,8 +307,8 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
     case 'subagent_return': {
       const parent = eventAgent(state, sessionId, actor(payload, 'parent'), at)
       const child = eventAgent(state, sessionId, actor(payload, 'child'), at)
-      if (parent) setState(state, parent, 'unknown', at)
-      if (child) setState(state, child, 'unknown', at)
+      if (parent) setState(state, parent, 'planning', at)
+      if (child) setState(state, child, 'idle', at)
       return
     }
 
