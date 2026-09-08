@@ -67,11 +67,12 @@ if (!TOKEN) {
 }
 
 let chain = Promise.resolve()
-let stopped = false
+let acceptEvents = true
+const activeSessions = new Map<string, RelayLifecycleEvent>()
 
 function enqueue(body: Record<string, unknown>): void {
+  if (!acceptEvents) return
   chain = chain.then(async () => {
-    if (stopped) return
     const response = await fetch(REMOTE_URL, {
       method: 'POST',
       headers: {
@@ -90,6 +91,9 @@ function enqueue(body: Record<string, unknown>): void {
 }
 
 function sendLifecycle(event: RelayLifecycleEvent): void {
+  const key = `${event.runtime}:${event.sessionId}`
+  if (event.type === 'ended') activeSessions.delete(key)
+  else activeSessions.set(key, event)
   const session = {
     id: event.sessionId,
     label: safeLabel(event),
@@ -114,6 +118,7 @@ async function main(): Promise<void> {
     source: 'local',
     hostId: HOST_ID,
     watchAll,
+    enableClaudeHookServer: false,
     verbose: process.env.AGENT_FLOW_VERBOSE === '1',
     onEvent: (event) => enqueue({
       source: 'local',
@@ -127,9 +132,14 @@ async function main(): Promise<void> {
   console.log(`[agent-flow] connected to hosted Office (${watchAll ? 'all local sessions' : workspace})`)
   console.log('[agent-flow] Ctrl+C disconnects; no local service remains installed')
 
-  const cleanup = () => {
-    stopped = true
+  const cleanup = async () => {
+    if (!acceptEvents) return
+    for (const event of [...activeSessions.values()]) {
+      sendLifecycle({ ...event, type: 'ended' })
+    }
+    acceptEvents = false
     relay.dispose()
+    await chain
     process.exit(0)
   }
   process.once('SIGINT', cleanup)
@@ -141,4 +151,3 @@ main().catch((error: unknown) => {
   console.error('[agent-flow] unable to connect:', error instanceof Error ? error.message : error)
   process.exit(1)
 })
-

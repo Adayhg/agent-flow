@@ -461,6 +461,8 @@ export interface RelayOptions {
   onSessionLifecycle?: (event: RelayLifecycleEvent) => void
   /** Watch every Claude/Codex session, regardless of the workspace path. */
   watchAll?: boolean
+  /** Disable the optional loopback Claude hook listener for file-only bridges. */
+  enableClaudeHookServer?: boolean
 }
 
 export interface RelayLifecycleEvent {
@@ -593,17 +595,19 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
   let projectDirWatcher: fs.FSWatcher | null = null
 
   if (wantClaude) {
-    hookServer = new HookServer()
-    const hookPort = await hookServer.start()
-    if (hookPort === HOOK_SERVER_NOT_STARTED) {
-      throw new Error('Failed to start hook server (port in use)')
+    if (options.enableClaudeHookServer !== false) {
+      hookServer = new HookServer()
+      const hookPort = await hookServer.start()
+      if (hookPort === HOOK_SERVER_NOT_STARTED) {
+        throw new Error('Failed to start hook server (port in use)')
+      }
+
+      hookServer.onEvent((event: AgentEvent) => {
+        broadcastEvent({ ...event, runtime: 'claude' }, 'claude')
+      })
+
+      writeDiscoveryFile(hookPort, workspace)
     }
-
-    hookServer.onEvent((event: AgentEvent) => {
-      broadcastEvent({ ...event, runtime: 'claude' }, 'claude')
-    })
-
-    writeDiscoveryFile(hookPort, workspace)
 
     scanForActiveSessions(workspace, options.watchAll === true)
     scanInterval = setInterval(() => scanForActiveSessions(workspace, options.watchAll === true), SCAN_INTERVAL_MS)
