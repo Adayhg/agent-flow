@@ -1,10 +1,12 @@
 param(
-  [string]$Workspace = (Get-Location).Path,
+  [string]$Workspace,
   [ValidateSet('auto', 'claude', 'codex')]
   [string]$Runtime = 'auto'
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if (-not $Workspace) { $Workspace = $repoRoot }
 $remoteUrl = 'https://launcher.104-248-32-222.sslip.io/agent-flow/ingest'
 $sshKey = if ($env:AGENT_FLOW_VPS_KEY) { $env:AGENT_FLOW_VPS_KEY } else { 'C:\Users\aday_\.ssh\id_ed25519_vps' }
 $remoteTokenFile = '/home/discanary/apps/agent-flow-office/.relay.env'
@@ -31,11 +33,13 @@ $env:AGENT_FLOW_WORKSPACE = $Workspace
 $env:AGENT_FLOW_WATCH_ALL = '1'
 $env:AGENT_FLOW_HOST_ID = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { 'windows-local' }
 
+Push-Location -LiteralPath $repoRoot
 try {
   & pnpm run connect:hosted
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {
+  Pop-Location
   Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
   Remove-Item Env:AGENT_FLOW_REMOTE_URL -ErrorAction SilentlyContinue
   Remove-Item Env:AGENT_FLOW_INGEST_TOKEN -ErrorAction SilentlyContinue
