@@ -107,7 +107,10 @@ function roomForZone(zone: OfficeZone): RoomId {
     case 'executing': return 'lab'
     case 'waiting_approval': return 'decisions'
     case 'blocked': return 'incidents'
-    case 'completed': return 'deliveries'
+    // A completed agent is available for the next task again. Keep its green
+    // completed state badge, but return the character to the waiting room so
+    // the office does not strand finished sessions in the delivery area.
+    case 'completed': return 'entrance'
     case 'idle':
     case 'stale': return 'entrance'
     case 'unknown': return 'entrance'
