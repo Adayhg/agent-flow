@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $remoteUrl = 'https://launcher.104-248-32-222.sslip.io/agent-flow/ingest'
 $sshKey = if ($env:AGENT_FLOW_VPS_KEY) { $env:AGENT_FLOW_VPS_KEY } else { 'C:\Users\aday_\.ssh\id_ed25519_vps' }
 $remoteTokenFile = '/home/discanary/apps/agent-flow-office/.relay.env'
+$knownHosts = Join-Path ([IO.Path]::GetTempPath()) "agent-flow-vps-$PID-known_hosts"
 
 if (-not (Test-Path -LiteralPath $sshKey)) {
   throw "No encuentro la clave SSH del VPS en $sshKey"
@@ -15,7 +16,7 @@ if (-not (Test-Path -LiteralPath $sshKey)) {
 
 # Read the token over the already configured SSH trust. It is kept only in
 # this PowerShell process environment and is never written or displayed.
-$tokenLine = (& ssh -i $sshKey -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o LogLevel=ERROR `
+$tokenLine = (& ssh -i $sshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$knownHosts" -o LogLevel=ERROR `
   discanary@104.248.32.222 "grep '^AGENT_FLOW_INGEST_TOKEN=' $remoteTokenFile" 2>$null)
 if ($LASTEXITCODE -ne 0 -or -not $tokenLine) {
   throw 'No se pudo obtener el token seguro del relay del VPS.'
@@ -35,6 +36,7 @@ try {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {
+  Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
   Remove-Item Env:AGENT_FLOW_REMOTE_URL -ErrorAction SilentlyContinue
   Remove-Item Env:AGENT_FLOW_INGEST_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:AGENT_FLOW_RUNTIME -ErrorAction SilentlyContinue
