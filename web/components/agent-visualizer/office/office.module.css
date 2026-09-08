@@ -144,6 +144,7 @@
   transform: translate(-50%, -50%);
   transition: transform .18s ease, filter .18s ease;
 }
+.agent[data-room="entrance"] { width: min(8vw, 68px); min-width: 40px; }
 .agent:hover { transform: translate(-50%, -53%); filter: brightness(1.04); }
 .agent:focus-visible { outline: 3px solid #163d7b; outline-offset: 4px; border-radius: 8px; }
 .agent[aria-pressed="true"] { transform: translate(-50%, -54%) scale(1.08); z-index: 5; }

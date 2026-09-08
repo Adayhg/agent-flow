@@ -32,7 +32,7 @@ interface PlacedAgent {
 }
 
 const ROOMS: readonly RoomDefinition[] = [
-  { id: 'entrance', label: 'Entrada', hint: 'Agentes disponibles', icon: '✦', x: 22, y: 22, width: 198, height: 150 },
+  { id: 'entrance', label: 'Sala de espera', hint: 'Agentes disponibles', icon: '✦', x: 22, y: 22, width: 198, height: 150 },
   { id: 'meetings', label: 'Reuniones', hint: 'Coordinación', icon: '◌', x: 260, y: 22, width: 226, height: 150 },
   { id: 'library', label: 'Biblioteca', hint: 'Investigación', icon: '▤', x: 526, y: 22, width: 226, height: 150 },
   { id: 'lab', label: 'Laboratorio', hint: 'Herramientas', icon: '⚙', x: 792, y: 22, width: 186, height: 150 },
@@ -94,9 +94,9 @@ interface StandbyAgentDefinition {
 
 /** Decorative, non-observed positions shown only while no session is active. */
 const STANDBY_AGENTS: readonly StandbyAgentDefinition[] = [
-  { id: 'standby-terra', name: 'Terra', role: 'orchestrator', model: 'Terra', avatar: 'terra', room: 'entrance', x: 82, y: 124 },
-  { id: 'standby-luna', name: 'Luna', role: 'researcher', model: 'Luna', avatar: 'luna', room: 'meetings', x: 372, y: 124 },
-  { id: 'standby-specialist', name: 'Especialista', role: 'specialist', avatar: 'generated', room: 'library', x: 638, y: 124 },
+  { id: 'standby-terra', name: 'Terra', role: 'orchestrator', model: 'Terra', avatar: 'terra', room: 'entrance', x: 58, y: 124 },
+  { id: 'standby-luna', name: 'Luna', role: 'researcher', model: 'Luna', avatar: 'luna', room: 'entrance', x: 121, y: 124 },
+  { id: 'standby-specialist', name: 'Especialista', role: 'specialist', avatar: 'generated', room: 'entrance', x: 184, y: 124 },
 ]
 
 function roomForZone(zone: OfficeZone): RoomId {
@@ -114,10 +114,17 @@ function roomForZone(zone: OfficeZone): RoomId {
   }
 }
 
+function roomForAgent(agent: OfficeAgent): RoomId {
+  // Available or unclassified agents stay together in the waiting room. This
+  // also handles a graph adapter that reports a stale zone alongside idle state.
+  if (agent.state === 'idle' || agent.state === 'unknown' || agent.state === 'stale') return 'entrance'
+  return roomForZone(agent.zone)
+}
+
 function placeAgents(agents: readonly OfficeAgent[]): PlacedAgent[] {
   const grouped = new Map<RoomId, OfficeAgent[]>()
   for (const room of ROOMS) grouped.set(room.id, [])
-  for (const agent of agents) grouped.get(roomForZone(agent.zone))?.push(agent)
+  for (const agent of agents) grouped.get(roomForAgent(agent))?.push(agent)
 
   const placements: PlacedAgent[] = []
   for (const room of ROOMS) {
@@ -390,7 +397,7 @@ export function OfficeView({
             <button className={styles.dismiss} type="button" onClick={onClearSelection} aria-label="Cerrar detalle">×</button>
           </div>
           <span>{STATE_LABELS[selected.state]}</span>
-          <span className={styles.zoneLabel}>Zona: {ROOMS.find(room => room.id === roomForZone(selected.zone))?.label}</span>
+          <span className={styles.zoneLabel}>Zona: {ROOMS.find(room => room.id === roomForAgent(selected))?.label}</span>
           {selected.workLabel && selected.name !== selected.workLabel && <span className={styles.sourceName}>Origen: {selected.name}</span>}
           {selected.model && <span className={styles.modelName}>{selected.model}</span>}
           <code className={styles.agentId}>{selected.id}</code>
@@ -417,6 +424,7 @@ function StandbyAgent({ definition, mobile = false }: StandbyAgentProps) {
       data-avatar={definition.avatar}
       data-avatar-key={definition.id}
       data-role={definition.role}
+      data-room={definition.room}
       data-state="idle"
       role="img"
       style={{ '--agent-x': `${definition.x / 10}%`, '--agent-y': `${definition.y / 6.3}%`, '--avatar-hue': avatarHue(definition.id) } as CSSProperties}
@@ -457,6 +465,7 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
       aria-label={`${name}, ${roleLabel}${familyLabel ? `, ${familyLabel}` : ''}, ${stateLabel}, ${room.label}`}
       className={styles.agent}
       data-role={agent.workRole ?? 'specialist'}
+      data-room={room.id}
       data-state={agent.state}
       data-avatar={agent.avatar.family}
       data-avatar-key={agent.avatar.key}
