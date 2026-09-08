@@ -37,6 +37,8 @@ type RuntimeName = 'claude' | 'codex' | 'unknown'
 let relaySource: EventSource = 'vps'
 let relayHostId = os.hostname()
 let ingestToken = ''
+let relayEventSink: ((event: AgentEvent) => void) | null = null
+let relayLifecycleSink: ((event: RelayLifecycleEvent) => void) | null = null
 /** Distinct model IDs seen across all watched sessions during this relay session.
  *  Populated from `model_detected` events (emitted by both the Claude transcript
  *  parser and the Codex rollout parser). Read at session_end for telemetry. */
@@ -127,6 +129,15 @@ function broadcast(data: string) {
 const eventBuffer = new Map<string, AgentEvent[]>()
 
 function broadcastEvent(event: AgentEvent, runtime?: RuntimeName) {
+  // A remote forwarder can subscribe to the raw, un-namespaced event before
+  // this relay adds its public source/host/runtime namespace. The hosted
+  // relay performs that namespacing exactly once on ingest.
+  relayEventSink?.({
+    ...event,
+    source: event.source || relaySource,
+    hostId: event.hostId || relayHostId,
+    runtime: event.runtime || runtime || 'unknown',
+  })
   const observedEvent = publicEvent(event, runtime)
   sessionEventCount++
   if (observedEvent.type === 'model_detected') {
@@ -155,6 +166,14 @@ function broadcastEvent(event: AgentEvent, runtime?: RuntimeName) {
 }
 
 function broadcastSessionLifecycle(type: 'started' | 'ended' | 'updated', sessionId: string, label: string, runtime: RuntimeName = 'unknown') {
+  relayLifecycleSink?.({
+    type,
+    sessionId,
+    label,
+    runtime,
+    source: relaySource,
+    hostId: relayHostId,
+  })
   const session = publicSession({
     id: sessionId, label, status: type === 'ended' ? 'completed' : 'active',
     startTime: Date.now(), lastActivityTime: Date.now(),
@@ -199,7 +218,7 @@ const parser = new TranscriptParser({
   emit: emitEvent,
   elapsed,
   getSession: (sessionId: string) => sessions.get(sessionId),
-  fireSessionLifecycle: (event) => broadcastSessionLifecycle(event.type, event.sessionId, event.label),
+  fireSessionLifecycle: (event) => broadcastSessionLifecycle(event.type, event.sessionId, event.label, 'claude'),
   emitContextUpdate,
 })
 
@@ -322,29 +341,39 @@ function readNewLines(sessionId: string) {
 
 // ─── Session scanner ────────────────────────────────────────────────────────
 
-function scanForActiveSessions(workspace: string) {
+function scanForActiveSessions(workspace: string, watchAll = false) {
   if (!fs.existsSync(CLAUDE_DIR)) return
+
+  const dirsToScan: string[] = []
+  if (watchAll) {
+    try {
+      for (const dir of fs.readdirSync(CLAUDE_DIR, { withFileTypes: true })) {
+        if (dir.isDirectory()) dirsToScan.push(path.join(CLAUDE_DIR, dir.name))
+      }
+    } catch { /* ignore an unavailable Claude directory */ }
+  }
 
   let resolved = workspace
   try { resolved = fs.realpathSync(resolved) } catch {}
   const encoded = resolved.replace(/[^a-zA-Z0-9]/g, '-')
 
-  const dirsToScan: string[] = []
   // Case-folded on Windows — VS Code/shells report `c:\...` while Claude Code
   // encodes `C--...`, so exact string matching never found the project dir there.
-  const encodedFolded = foldPathCase(encoded)
-  try {
-    for (const dir of fs.readdirSync(CLAUDE_DIR, { withFileTypes: true })) {
-      if (!dir.isDirectory()) continue
-      const nameFolded = foldPathCase(dir.name)
-      if (nameFolded === encodedFolded || nameFolded.startsWith(encodedFolded + '-')) {
-        dirsToScan.push(path.join(CLAUDE_DIR, dir.name))
+  if (!watchAll) {
+    const encodedFolded = foldPathCase(encoded)
+    try {
+      for (const dir of fs.readdirSync(CLAUDE_DIR, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue
+        const nameFolded = foldPathCase(dir.name)
+        if (nameFolded === encodedFolded || nameFolded.startsWith(encodedFolded + '-')) {
+          dirsToScan.push(path.join(CLAUDE_DIR, dir.name))
+        }
       }
+    } catch {
+      // readdir failed — fall back to the exact-match dir if it exists
+      const projectDir = path.join(CLAUDE_DIR, encoded)
+      if (fs.existsSync(projectDir)) dirsToScan.push(projectDir)
     }
-  } catch {
-    // readdir failed — fall back to the exact-match dir if it exists
-    const projectDir = path.join(CLAUDE_DIR, encoded)
-    if (fs.existsSync(projectDir)) dirsToScan.push(projectDir)
   }
 
   for (const dirPath of dirsToScan) {
@@ -424,6 +453,23 @@ export interface RelayOptions {
    *  Mirrors the extension's `agentVisualizer.runtime` setting so users of the
    *  dev relay and `npx agent-flow-app` have a way to opt out of one runtime. */
   runtime?: RelayRuntimeMode
+  /** Origin metadata used when this relay forwards local sessions upstream. */
+  source?: EventSource
+  hostId?: string
+  /** Subscribe to raw local events/lifecycle without starting an HTTP server. */
+  onEvent?: (event: AgentEvent) => void
+  onSessionLifecycle?: (event: RelayLifecycleEvent) => void
+  /** Watch every Claude/Codex session, regardless of the workspace path. */
+  watchAll?: boolean
+}
+
+export interface RelayLifecycleEvent {
+  type: 'started' | 'ended' | 'updated'
+  sessionId: string
+  label: string
+  runtime: RuntimeName
+  source: EventSource
+  hostId: string
 }
 
 interface ExternalIngestBody {
@@ -529,9 +575,11 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     throw new Error('createRelay() can only be called once per process')
   }
   relayCreated = true
-  relaySource = process.env.AGENT_FLOW_SOURCE === 'local' ? 'local' : 'vps'
-  relayHostId = process.env.AGENT_FLOW_HOST_ID || os.hostname()
+  relaySource = options.source || (process.env.AGENT_FLOW_SOURCE === 'local' ? 'local' : 'vps')
+  relayHostId = options.hostId || process.env.AGENT_FLOW_HOST_ID || os.hostname()
   ingestToken = process.env.AGENT_FLOW_INGEST_TOKEN || ''
+  relayEventSink = options.onEvent || null
+  relayLifecycleSink = options.onSessionLifecycle || null
   externalSessions.clear()
   externalDedupeKeys.clear()
 
@@ -557,8 +605,8 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
 
     writeDiscoveryFile(hookPort, workspace)
 
-    scanForActiveSessions(workspace)
-    scanInterval = setInterval(() => scanForActiveSessions(workspace), SCAN_INTERVAL_MS)
+    scanForActiveSessions(workspace, options.watchAll === true)
+    scanInterval = setInterval(() => scanForActiveSessions(workspace, options.watchAll === true), SCAN_INTERVAL_MS)
 
     const resolved = (() => { try { return fs.realpathSync(workspace) } catch { return workspace } })()
     const encoded = resolved.replace(/[^a-zA-Z0-9]/g, '-')
@@ -580,7 +628,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
   // wiring both would double-broadcast session-started to SSE clients.
   let codexWatcher: CodexSessionWatcher | null = null
   if (wantCodex) {
-    codexWatcher = new CodexSessionWatcher(workspace)
+    codexWatcher = new CodexSessionWatcher(options.watchAll === true ? null : workspace)
     codexWatcher.onEvent((event) => broadcastEvent(event, 'codex'))
     codexWatcher.onSessionLifecycle((lifecycle) => {
       broadcastSessionLifecycle(lifecycle.type, lifecycle.sessionId, lifecycle.label, 'codex')
@@ -787,6 +835,8 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         }
       }
       codexWatcher?.dispose()
+      relayEventSink = null
+      relayLifecycleSink = null
     },
   }
 }

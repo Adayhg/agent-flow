@@ -50,6 +50,24 @@ equal local/VPS identifiers never collide.
 - If a runtime exposes no outgoing hook or bridge, it cannot be observed live
   under the no-local-service constraint; the Office will not fabricate it.
 
+## Ephemeral Windows bridge
+
+The repository includes `scripts/connect-hosted.ps1` for the local Claude/Codex
+apps. It obtains the ingest token through the existing VPS SSH access, keeps it
+only in the process environment, and starts a temporary filesystem watcher.
+It does not install a Windows service, scheduled task, or resident web server.
+
+Run it from the repository folder and stop it with `Ctrl+C`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\connect-hosted.ps1
+```
+
+The bridge watches all recent local sessions by default and forwards only
+bounded role/model/tool metadata. Prompts, file paths, arguments, tool results,
+and task text are removed before the HTTP request is made. If the bridge is
+not running, the hosted Office continues to show VPS sessions normally.
+
 ## Expected response
 
 The relay returns `202` with the number of accepted events. Duplicate events

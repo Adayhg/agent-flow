@@ -20,6 +20,7 @@ Claude Code is powerful, but its execution is a black box — you see the final 
 - **Live agent visualization**: Watch agent execution as an interactive node graph with real-time tool calls, branching, and return flows
 - **Claude Code + Codex**: Auto-detects sessions from both runtimes concurrently and shows them side-by-side, or restrict to one via the `agentVisualizer.runtime` setting
 - **Claude Code hooks**: Lightweight HTTP hook server receives events directly from Claude Code for zero-latency streaming
+- **Hosted hybrid bridge**: Optional ephemeral Windows bridge forwards filtered local Claude/Codex session metadata to the VPS Office without installing a local service
 - **Codex rollout tailing**: Reads `~/.codex/sessions/**/rollout-*.jsonl` (respects `CODEX_HOME`) and surfaces tool calls, reasoning, and authoritative token counts from Codex's own event stream
 - **Multi-session support**: Track multiple concurrent agent sessions with tabs
 - **Interactive canvas**: Pan, zoom, click agents and tool calls to inspect details
@@ -99,6 +100,16 @@ NEXT_PUBLIC_BASE_PATH=/agent-flow
 NEXT_PUBLIC_RELAY_URL=/agent-flow/events
 NEXT_PUBLIC_DEMO=0
 ```
+
+To make the currently running local Claude/Codex sessions visible in that
+hosted Office, run the ephemeral bridge from this repository (it does not
+install a Windows service or local web server):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\connect-hosted.ps1
+```
+
+Stop it with `Ctrl+C` when local sessions no longer need to be shown.
 
 The production units, reverse-proxy locations, PWA manifest, and network-only
 service worker are in [`deploy/agent-flow/`](deploy/agent-flow/). Keep the

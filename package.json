@@ -4,6 +4,8 @@
     "setup": "node scripts/setup.js",
     "dev": "NEXT_PUBLIC_DEMO=0 NEXT_PUBLIC_RELAY_PORT=3001 concurrently -n relay,web -c blue,green \"pnpm run dev:relay\" \"pnpm run dev:web\"",
     "dev:relay": "node scripts/build-relay.js && node scripts/.dev-relay.js",
+    "build:forwarder": "node scripts/build-forwarder.js",
+    "connect:hosted": "node scripts/build-forwarder.js && node scripts/.remote-forwarder.js",
     "dev:demo": "NEXT_PUBLIC_DEMO=1 pnpm run dev:web",
     "dev:web": "pnpm --filter agent-flow-web run dev",
     "dev:extension": "pnpm --filter agent-flow run watch",

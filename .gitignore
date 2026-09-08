@@ -10,6 +10,8 @@ dist
 extension/README.md
 scripts/.dev-relay.js
 scripts/.dev-relay.js.map
+scripts/.remote-forwarder.js
+scripts/.remote-forwarder.js.map
 app/dist/
 next-env.d.ts
 *.tsbuildinfo
