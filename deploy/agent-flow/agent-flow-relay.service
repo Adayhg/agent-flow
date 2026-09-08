@@ -11,6 +11,9 @@ WorkingDirectory=/home/discanary/apps/agent-flow-office
 Environment=HOME=/home/discanary
 Environment=NODE_ENV=production
 Environment=AGENT_FLOW_RUNTIME=auto
+Environment=AGENT_FLOW_SOURCE=vps
+Environment=AGENT_FLOW_HOST_ID=vps
+EnvironmentFile=-/home/discanary/apps/agent-flow-office/.relay.env
 Environment=AGENT_FLOW_RELAY_HOST=172.17.0.1
 ExecStart=/usr/bin/node /home/discanary/apps/agent-flow-office/scripts/.dev-relay.js /home/discanary
 Restart=always

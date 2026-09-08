@@ -36,6 +36,10 @@ export async function startServer(options: ServerOptions) {
       return relay.handleSSE(req, res)
     }
 
+    if (req.url === '/ingest' && req.method === 'POST') {
+      return relay.handleIngest(req, res)
+    }
+
     // Static files (UI)
     if (req.method === 'GET') {
       return serveStatic(req, res)

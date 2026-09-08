@@ -46,6 +46,31 @@ location = /agent-flow/events {
 }
 ```
 
+## Local runtime ingest
+
+The local Claude/Codex integration sends only bounded lifecycle metadata to
+this endpoint. It is protected by the relay's `AGENT_FLOW_INGEST_TOKEN`; do
+not put the token in the URL or expose the private relay port directly.
+
+```nginx
+location = /agent-flow/ingest {
+    proxy_pass http://172.17.0.1:3001/ingest;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Agent-Flow-Token $http_x_agent_flow_token;
+    proxy_request_buffering off;
+    client_max_body_size 256k;
+    proxy_read_timeout 30s;
+}
+```
+
+This route may be enabled before a local source is configured: without the
+token the relay returns `503 ingest-disabled`, and without a valid token it
+returns `401`. No Windows service is required.
+
 The private listeners must not be published directly. Test the proxy with
 `nginx -t`/NPM's equivalent before reloading and then verify the authenticated
 browser stream, not only an HTTP 200 response.

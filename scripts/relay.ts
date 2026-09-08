@@ -24,16 +24,63 @@ import { setLogLevel } from '../extension/src/logger'
 import type { TelemetryClient } from './telemetry'
 
 const MAX_EVENT_BUFFER = 5000
+const MAX_EXTERNAL_BODY_BYTES = 256 * 1024
+const MAX_EXTERNAL_DEDUPE_KEYS = 10000
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects')
 
 let relayCreated = false
 let verbose = false
 let sessionEventCount = 0
+type EventSource = 'local' | 'vps' | 'unknown'
+type RuntimeName = 'claude' | 'codex' | 'unknown'
+let relaySource: EventSource = 'vps'
+let relayHostId = os.hostname()
+let ingestToken = ''
 /** Distinct model IDs seen across all watched sessions during this relay session.
  *  Populated from `model_detected` events (emitted by both the Claude transcript
  *  parser and the Codex rollout parser). Read at session_end for telemetry. */
 const observedModels = new Set<string>()
+const externalSessions = new Map<string, SessionInfo>()
+const externalDedupeKeys = new Set<string>()
+
+function safeSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80) || 'unknown'
+}
+
+/** Namespace session IDs so local and VPS sessions can never collide. */
+function publicSessionId(source: EventSource, hostId: string, runtime: RuntimeName, sessionId: string): string {
+  return `${source}:${safeSegment(hostId)}:${runtime}:${sessionId}`
+}
+
+function publicOrigin(source?: EventSource, hostId?: string, runtime?: RuntimeName) {
+  return {
+    source: source || relaySource,
+    hostId: hostId || relayHostId,
+    runtime: runtime || 'unknown',
+  } as const
+}
+
+function publicEvent(event: AgentEvent, runtime?: RuntimeName): AgentEvent {
+  const origin = publicOrigin(event.source, event.hostId, runtime || event.runtime)
+  return {
+    ...event,
+    source: origin.source,
+    hostId: origin.hostId,
+    runtime: origin.runtime,
+    ...(event.sessionId ? { sessionId: publicSessionId(origin.source, origin.hostId, origin.runtime, event.sessionId) } : {}),
+  }
+}
+
+function publicSession(info: SessionInfo, runtime: RuntimeName, source: EventSource = relaySource, hostId = relayHostId): SessionInfo {
+  return {
+    ...info,
+    id: publicSessionId(source, hostId, runtime, info.id),
+    source,
+    hostId,
+    runtime,
+  }
+}
 
 // agent-flow-app version. Inlined by esbuild at bundle time via `define`.
 // In dev (running from source via tsx), falls back to reading app/package.json.
@@ -79,37 +126,45 @@ function broadcast(data: string) {
 
 const eventBuffer = new Map<string, AgentEvent[]>()
 
-function broadcastEvent(event: AgentEvent) {
+function broadcastEvent(event: AgentEvent, runtime?: RuntimeName) {
+  const observedEvent = publicEvent(event, runtime)
   sessionEventCount++
-  if (event.type === 'model_detected') {
-    const m = (event.payload as { model?: unknown } | undefined)?.model
+  if (observedEvent.type === 'model_detected') {
+    const m = (observedEvent.payload as { model?: unknown } | undefined)?.model
     if (typeof m === 'string' && m.length > 0) observedModels.add(m)
   }
-  const sid = event.sessionId?.slice(0, SESSION_ID_DISPLAY) || '?'
-  log(`[event] ${event.type} (session ${sid})`)
+  const sid = observedEvent.sessionId?.slice(0, SESSION_ID_DISPLAY) || '?'
+  log(`[event] ${observedEvent.type} (session ${sid})`)
 
-  if (event.sessionId) {
-    let buf = eventBuffer.get(event.sessionId) || []
-    buf.push(event)
+  if (observedEvent.sessionId) {
+    let buf = eventBuffer.get(observedEvent.sessionId) || []
+    buf.push(observedEvent)
     if (buf.length > MAX_EVENT_BUFFER) {
       buf = buf.slice(buf.length - MAX_EVENT_BUFFER)
     }
-    eventBuffer.set(event.sessionId, buf)
+    eventBuffer.set(observedEvent.sessionId, buf)
+
+    const external = externalSessions.get(observedEvent.sessionId)
+    if (external) {
+      external.lastActivityTime = Date.now()
+      external.status = 'active'
+    }
   }
 
-  broadcast(JSON.stringify({ type: 'agent-event', event }))
+  broadcast(JSON.stringify({ type: 'agent-event', event: observedEvent }))
 }
 
-function broadcastSessionLifecycle(type: 'started' | 'ended' | 'updated', sessionId: string, label: string) {
+function broadcastSessionLifecycle(type: 'started' | 'ended' | 'updated', sessionId: string, label: string, runtime: RuntimeName = 'unknown') {
+  const session = publicSession({
+    id: sessionId, label, status: type === 'ended' ? 'completed' : 'active',
+    startTime: Date.now(), lastActivityTime: Date.now(),
+  }, runtime)
   if (type === 'started') {
-    broadcast(JSON.stringify({
-      type: 'session-started',
-      session: { id: sessionId, label, status: 'active', startTime: Date.now(), lastActivityTime: Date.now() } as SessionInfo,
-    }))
+    broadcast(JSON.stringify({ type: 'session-started', session }))
   } else if (type === 'ended') {
-    broadcast(JSON.stringify({ type: 'session-ended', sessionId }))
+    broadcast(JSON.stringify({ type: 'session-ended', sessionId: session.id }))
   } else if (type === 'updated') {
-    broadcast(JSON.stringify({ type: 'session-updated', sessionId, label }))
+    broadcast(JSON.stringify({ type: 'session-updated', sessionId: session.id, label }))
   }
 }
 
@@ -137,7 +192,7 @@ function emitContextUpdate(agentName: string, session: WatchedSession, sessionId
 }
 
 function emitEvent(event: AgentEvent, sessionId?: string) {
-  broadcastEvent(sessionId ? { ...event, sessionId } : event)
+  broadcastEvent(sessionId ? { ...event, sessionId } : event, 'claude')
 }
 
 const parser = new TranscriptParser({
@@ -170,8 +225,8 @@ function resetInactivityTimer(sessionId: string) {
       type: 'agent_spawn',
       payload: { name: ORCHESTRATOR_NAME, isMain: true, task: session.label, ...(session.model ? { model: session.model } : {}) },
       sessionId,
-    })
-    broadcastSessionLifecycle('started', sessionId, session.label)
+    }, 'claude')
+    broadcastSessionLifecycle('started', sessionId, session.label, 'claude')
   }
 
   if (session.inactivityTimer) clearTimeout(session.inactivityTimer)
@@ -184,8 +239,8 @@ function resetInactivityTimer(sessionId: string) {
         type: 'agent_complete',
         payload: { name: ORCHESTRATOR_NAME },
         sessionId,
-      })
-      broadcastSessionLifecycle('ended', sessionId, session.label)
+      }, 'claude')
+      broadcastSessionLifecycle('ended', sessionId, session.label, 'claude')
     }
   }, INACTIVITY_TIMEOUT_MS)
 }
@@ -219,12 +274,12 @@ function watchSession(sessionId: string, filePath: string) {
   session.fileSize = stat.size
   parser.extractSessionLabel(catchUpEntries, session)
 
-  broadcastSessionLifecycle('started', sessionId, session.label)
+  broadcastSessionLifecycle('started', sessionId, session.label, 'claude')
   broadcastEvent({
     time: 0, type: 'agent_spawn',
     payload: { name: ORCHESTRATOR_NAME, isMain: true, task: session.label, ...(session.model ? { model: session.model } : {}) },
     sessionId,
-  })
+  }, 'claude')
   session.sessionDetected = true
 
   emitContextUpdate(ORCHESTRATOR_NAME, session, sessionId)
@@ -353,6 +408,8 @@ function removeDiscoveryFile() {
 export interface Relay {
   /** Handle an incoming SSE connection */
   handleSSE: (req: http.IncomingMessage, res: http.ServerResponse) => void
+  /** Accept privacy-filtered events from an existing local runtime channel. */
+  handleIngest: (req: http.IncomingMessage, res: http.ServerResponse) => void
   /** Clean up all resources */
   dispose: () => void
 }
@@ -367,6 +424,93 @@ export interface RelayOptions {
    *  Mirrors the extension's `agentVisualizer.runtime` setting so users of the
    *  dev relay and `npx agent-flow-app` have a way to opt out of one runtime. */
   runtime?: RelayRuntimeMode
+}
+
+interface ExternalIngestBody {
+  source?: EventSource
+  hostId?: string
+  runtime?: RuntimeName
+  lifecycle?: 'started' | 'ended' | 'updated'
+  session?: {
+    id?: string
+    label?: string
+    status?: 'active' | 'completed'
+    startTime?: number
+    lastActivityTime?: number
+  }
+  event?: Partial<AgentEvent>
+  events?: Array<Partial<AgentEvent>>
+}
+
+const EXTERNAL_EVENT_TYPES = new Set<AgentEvent['type']>([
+  'agent_spawn', 'agent_complete', 'agent_idle', 'message', 'context_update',
+  'model_detected', 'tool_call_start', 'tool_call_end', 'subagent_dispatch',
+  'subagent_return', 'permission_requested', 'error',
+])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function safeExternalPayload(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {}
+  // Keep only bounded metadata. In particular, prompts, task text, arguments,
+  // file paths, and tool results must never be forwarded by the local bridge.
+  const allowed = new Set(['agent', 'name', 'parent', 'child', 'model', 'isMain', 'isError', 'tool', 'role', 'workRole', 'id', 'tokens'])
+  const result: Record<string, unknown> = {}
+  for (const [key, raw] of Object.entries(value)) {
+    if (!allowed.has(key)) continue
+    if (typeof raw === 'string') result[key] = raw.slice(0, 160)
+    else if (typeof raw === 'number' || typeof raw === 'boolean') result[key] = raw
+  }
+  if (isRecord(value.breakdown)) {
+    const breakdown: Record<string, number> = {}
+    for (const [key, raw] of Object.entries(value.breakdown)) {
+      if (typeof raw === 'number' && Number.isFinite(raw)) breakdown[key] = raw
+    }
+    if (Object.keys(breakdown).length) result.breakdown = breakdown
+  }
+  return result
+}
+
+function normalizeExternalEvent(raw: unknown, defaults: { hostId: string; runtime: RuntimeName; sessionId?: string }): AgentEvent | null {
+  if (!isRecord(raw) || typeof raw.type !== 'string' || !EXTERNAL_EVENT_TYPES.has(raw.type as AgentEvent['type'])) return null
+  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : defaults.sessionId
+  if (!sessionId) return null
+  const time = typeof raw.time === 'number' && Number.isFinite(raw.time) ? raw.time : Date.now() / 1000
+  const sequence = typeof raw.sequence === 'number' && Number.isFinite(raw.sequence) ? raw.sequence : undefined
+  return {
+    time,
+    type: raw.type as AgentEvent['type'],
+    payload: safeExternalPayload(raw.payload),
+    sessionId,
+    source: 'local',
+    hostId: defaults.hostId,
+    runtime: defaults.runtime,
+    ...(sequence === undefined ? {} : { sequence }),
+  }
+}
+
+async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  return await new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer | string) => {
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += data.length
+      if (size > MAX_EXTERNAL_BODY_BYTES) {
+        reject(new Error('body-too-large'))
+        req.destroy()
+        return
+      }
+      chunks.push(data)
+    })
+    req.on('end', () => {
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))) }
+      catch { reject(new Error('invalid-json')) }
+    })
+    req.on('error', reject)
+  })
 }
 
 function resolveRuntimeMode(explicit?: RelayRuntimeMode): RelayRuntimeMode {
@@ -385,6 +529,11 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     throw new Error('createRelay() can only be called once per process')
   }
   relayCreated = true
+  relaySource = process.env.AGENT_FLOW_SOURCE === 'local' ? 'local' : 'vps'
+  relayHostId = process.env.AGENT_FLOW_HOST_ID || os.hostname()
+  ingestToken = process.env.AGENT_FLOW_INGEST_TOKEN || ''
+  externalSessions.clear()
+  externalDedupeKeys.clear()
 
   const mode = resolveRuntimeMode(options.runtime)
   const wantClaude = mode === 'claude' || mode === 'auto'
@@ -403,7 +552,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     }
 
     hookServer.onEvent((event: AgentEvent) => {
-      broadcast(JSON.stringify({ type: 'agent-event', event }))
+      broadcastEvent({ ...event, runtime: 'claude' }, 'claude')
     })
 
     writeDiscoveryFile(hookPort, workspace)
@@ -432,9 +581,9 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
   let codexWatcher: CodexSessionWatcher | null = null
   if (wantCodex) {
     codexWatcher = new CodexSessionWatcher(workspace)
-    codexWatcher.onEvent((event) => broadcastEvent(event))
+    codexWatcher.onEvent((event) => broadcastEvent(event, 'codex'))
     codexWatcher.onSessionLifecycle((lifecycle) => {
-      broadcastSessionLifecycle(lifecycle.type, lifecycle.sessionId, lifecycle.label)
+      broadcastSessionLifecycle(lifecycle.type, lifecycle.sessionId, lifecycle.label, 'codex')
     })
     codexWatcher.start()
   }
@@ -469,6 +618,38 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     process.exit(1)
   })
 
+  const upsertExternalSession = (rawId: string, hostId: string, runtime: RuntimeName, input?: ExternalIngestBody['session']): SessionInfo => {
+    const id = publicSessionId('local', hostId, runtime, rawId)
+    const existing = externalSessions.get(id)
+    const next: SessionInfo = {
+      id,
+      label: typeof input?.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 160) : `Local ${runtime} ${rawId.slice(0, SESSION_ID_DISPLAY)}`,
+      status: input?.status === 'completed' ? 'completed' : 'active',
+      startTime: typeof input?.startTime === 'number' ? input.startTime : existing?.startTime ?? Date.now(),
+      lastActivityTime: typeof input?.lastActivityTime === 'number' ? input.lastActivityTime : Date.now(),
+      source: 'local', hostId, runtime,
+    }
+    externalSessions.set(id, next)
+    if (!existing) {
+      broadcast(JSON.stringify({ type: 'session-started', session: next }))
+    } else if (existing.label !== next.label) {
+      broadcast(JSON.stringify({ type: 'session-updated', sessionId: id, label: next.label }))
+    }
+    return next
+  }
+
+  const rememberExternalEvent = (event: AgentEvent): boolean => {
+    const raw = `${event.hostId}|${event.runtime}|${event.sessionId}|${event.sequence ?? ''}|${event.type}|${JSON.stringify(event.payload)}`
+    const key = crypto.createHash('sha256').update(raw).digest('hex')
+    if (externalDedupeKeys.has(key)) return false
+    externalDedupeKeys.add(key)
+    if (externalDedupeKeys.size > MAX_EXTERNAL_DEDUPE_KEYS) {
+      const oldest = externalDedupeKeys.values().next().value
+      if (typeof oldest === 'string') externalDedupeKeys.delete(oldest)
+    }
+    return true
+  }
+
   return {
     handleSSE(req: http.IncomingMessage, res: http.ServerResponse) {
       res.writeHead(200, {
@@ -489,13 +670,16 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       const sessionList: SessionInfo[] = []
       for (const session of sessions.values()) {
         if (!session.sessionDetected) continue
-        sessionList.push({
+        sessionList.push(publicSession({
           id: session.sessionId, label: session.label,
           status: session.sessionCompleted ? 'completed' : 'active',
           startTime: session.sessionStartTime, lastActivityTime: session.lastActivityTime,
-        })
+        }, 'claude'))
       }
-      if (codexWatcher) sessionList.push(...codexWatcher.getActiveSessions())
+      if (codexWatcher) {
+        sessionList.push(...codexWatcher.getActiveSessions().map(session => publicSession(session, 'codex')))
+      }
+      sessionList.push(...externalSessions.values())
       if (sessionList.length > 0) {
         sendSSE(res, { type: 'session-list', sessions: sessionList })
       }
@@ -513,6 +697,67 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
           sendSSE(res, { type: 'agent-event-batch', events: buffered })
         }
       }
+    },
+
+    handleIngest(req: http.IncomingMessage, res: http.ServerResponse) {
+      const suppliedToken = typeof req.headers.authorization === 'string'
+        ? req.headers.authorization.replace(/^Bearer\s+/i, '')
+        : typeof req.headers['x-agent-flow-token'] === 'string' ? req.headers['x-agent-flow-token'] : ''
+      if (!ingestToken) {
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({ error: 'ingest-disabled' }))
+        return
+      }
+      if (suppliedToken !== ingestToken) {
+        res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+
+      void readJsonBody(req).then(raw => {
+        if (!isRecord(raw)) throw new Error('invalid-payload')
+        const body = raw as ExternalIngestBody
+        if (body.source && body.source !== 'local') throw new Error('source-must-be-local')
+        if (typeof body.hostId !== 'string' || !body.hostId.trim()) throw new Error('host-id-required')
+        if (body.runtime !== 'claude' && body.runtime !== 'codex') throw new Error('runtime-required')
+        const hostId = body.hostId.trim().slice(0, 80)
+        const runtime = body.runtime
+        const incoming = [
+          ...(Array.isArray(body.events) ? body.events : []),
+          ...(body.event ? [body.event] : []),
+        ]
+        const defaultSessionId = body.session?.id || incoming.find(item => isRecord(item) && typeof item.sessionId === 'string')?.sessionId
+        let session: SessionInfo | undefined
+        if (defaultSessionId) session = upsertExternalSession(defaultSessionId, hostId, runtime, body.session)
+
+        let accepted = 0
+        for (const rawEvent of incoming) {
+          const event = normalizeExternalEvent(rawEvent, { hostId, runtime, sessionId: defaultSessionId })
+          if (!event || !rememberExternalEvent(event)) continue
+          if (!session || session.id !== publicSessionId('local', hostId, runtime, event.sessionId!)) {
+            session = upsertExternalSession(event.sessionId!, hostId, runtime, body.session)
+          }
+          broadcastEvent(event, runtime)
+          accepted++
+        }
+
+        const ended = body.lifecycle === 'ended' || body.session?.status === 'completed'
+        if (ended && session) {
+          const completed = { ...session, status: 'completed' as const, lastActivityTime: Date.now() }
+          externalSessions.set(session.id, completed)
+          broadcast(JSON.stringify({ type: 'session-ended', sessionId: session.id }))
+        }
+
+        res.writeHead(202, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify({ accepted, sessionId: session?.id ?? null }))
+      }).catch(error => {
+        const message = error instanceof Error ? error.message : 'invalid-payload'
+        const status = message === 'body-too-large' ? 413 : message === 'unauthorized' ? 401 : 400
+        if (!res.headersSent) {
+          res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ error: message }))
+        }
+      })
     },
 
     dispose() {

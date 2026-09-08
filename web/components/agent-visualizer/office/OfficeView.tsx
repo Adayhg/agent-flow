@@ -208,7 +208,10 @@ export function OfficeView({
   }, [agents, roleFilter, search, stateFilter])
   const placements = useMemo(() => placeAgents(visibleAgents), [visibleAgents])
   const placementById = useMemo(() => new Map(placements.map(placement => [placement.agent.id, placement])), [placements])
-  const sessionCount = useMemo(() => new Set(agents.map(agent => agent.sessionLabel).filter(Boolean)).size, [agents])
+  const sessionCount = useMemo(
+    () => new Set(agents.map(agent => `${agent.source ?? 'unknown'}:${agent.hostId ?? ''}:${agent.sessionId ?? ''}`)).size,
+    [agents],
+  )
   const hierarchy = useMemo(
     () => (projection?.edges ?? suppliedEdges ?? []).filter(edge => placementById.has(edge.parentId) && placementById.has(edge.childId)),
     [projection, suppliedEdges, placementById],
@@ -399,6 +402,7 @@ export function OfficeView({
           <span>{STATE_LABELS[selected.state]}</span>
           <span className={styles.zoneLabel}>Zona: {ROOMS.find(room => room.id === roomForAgent(selected))?.label}</span>
           {selected.sessionLabel && <span className={styles.sourceName}>Sesión: {selected.sessionLabel}</span>}
+          {selected.source && <span className={styles.sourceName}>Origen: {selected.source.toUpperCase()}{selected.runtime ? ` · ${selected.runtime}` : ''}</span>}
           {selected.workLabel && selected.name !== selected.workLabel && <span className={styles.sourceName}>Origen: {selected.name}</span>}
           {selected.model && <span className={styles.modelName}>{selected.model}</span>}
           <code className={styles.agentId}>{selected.id}</code>
@@ -486,6 +490,7 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
       <span className={styles.roleBadge}><span aria-hidden="true">{roleMark}</span>{roleLabel}{familyLabel ? ` · ${familyLabel}` : ''}</span>
       <span className={styles.stateBadge}><span aria-hidden="true">{stateMark}</span>{stateLabel}</span>
       {agent.sessionLabel && <span className={styles.sessionBadge}>{agent.sessionLabel}</span>}
+      {agent.source && <span className={styles.sourceBadge}>{agent.source === 'local' ? 'LOCAL' : agent.source.toUpperCase()}</span>}
     </button>
   )
 }

@@ -24,6 +24,8 @@ interface MutableOfficeState {
   agents: Map<string, OfficeAgent>
   /** Child -> parent evidence. An edge is materialized only after both exist. */
   parentEvidence: Map<string, { parentId: string; evidence: OfficeEdge['evidence'] }>
+  /** Origin metadata is kept per session and copied onto projected agents. */
+  origins: Map<string, { source?: OfficeAgent['source']; hostId?: string; runtime?: OfficeAgent['runtime'] }>
 }
 
 /** FNV-1a produces deterministic, browser-safe opaque identifiers without a dependency. */
@@ -90,6 +92,7 @@ function ensureAgent(state: MutableOfficeState, sessionId: string, sourceAgentId
     id,
     sessionId,
     sourceAgentId,
+    ...state.origins.get(sessionId),
     name: displayName(sourceAgentId),
     parentId: null,
     state: 'unknown',
@@ -180,6 +183,13 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
   const sessionId = event.sessionId || DEFAULT_SESSION_ID
   const at = eventTime(event)
   const payload = event.payload || {}
+  if (event.source || event.hostId || event.runtime) {
+    state.origins.set(sessionId, {
+      source: event.source,
+      hostId: event.hostId,
+      runtime: event.runtime,
+    })
+  }
 
   switch (event.type) {
     case 'agent_spawn': {
@@ -380,6 +390,7 @@ export function projectOffice(
   const state: MutableOfficeState = {
     agents: new Map(),
     parentEvidence: new Map(),
+    origins: new Map(),
   }
 
   let newestEventTime = 0
@@ -400,6 +411,10 @@ export function projectOfficeGraph(source: OfficeGraphSource, options: OfficePro
   const state: MutableOfficeState = {
     agents: new Map(),
     parentEvidence: new Map(),
+    origins: new Map(),
+  }
+  if (source.source || source.hostId || source.runtime) {
+    state.origins.set(sessionId, { source: source.source, hostId: source.hostId, runtime: source.runtime })
   }
   let newestEventTime = 0
 

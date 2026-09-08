@@ -105,6 +105,10 @@ service worker are in [`deploy/agent-flow/`](deploy/agent-flow/). Keep the
 private web and relay listeners behind the launcher's existing authentication;
 never publish the relay port directly or cache authenticated agent data.
 
+For a hybrid office that also receives bounded events from an existing local
+Claude/Codex channel, see [`docs/hosted-hybrid-sessions.md`](docs/hosted-hybrid-sessions.md).
+This uses the VPS as the aggregator and does not require a new Windows service.
+
 ### VS Code Extension
 
 1. Install the extension

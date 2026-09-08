@@ -4,6 +4,7 @@ dist
 *.local
 .next
 *.vsix
+.relay.env
 
 # Auto-generated
 extension/README.md

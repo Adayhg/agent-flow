@@ -185,6 +185,7 @@
 .roleBadge span, .stateBadge span { margin-right: 2px; }
 .stateBadge { margin-top: 2px; padding: 2px 4px; border: 1px solid color-mix(in srgb, var(--accent) 42%, white); background: color-mix(in srgb, var(--accent) 14%, white); color: color-mix(in srgb, var(--accent) 85%, #18213b); font-size: clamp(6px, .66vw, 9px); font-weight: 700; line-height: 1; }
 .sessionBadge { max-width: 100%; margin-top: 2px; overflow: hidden; color: #68758a; font-size: clamp(6px, .58vw, 8px); font-weight: 700; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.sourceBadge { display: inline-flex; align-self: center; margin-top: 3px; padding: 1px 4px; border: 1px solid rgba(57, 87, 126, .22); border-radius: 999px; background: rgba(236, 243, 255, .8); color: #486487; font-size: clamp(5px, .52vw, 7px); font-weight: 800; letter-spacing: .06em; line-height: 1.1; }
 
 .detail { position: absolute; z-index: 8; right: 14px; bottom: 14px; width: min(280px, calc(100% - 28px)); padding: 10px 12px; border: 1px solid rgba(70, 80, 104, .28); border-radius: 10px; background: rgba(255, 255, 255, .93); box-shadow: 0 8px 24px rgba(27, 39, 59, .18); font-size: 12px; }
 .detailTitle { display: flex; align-items: center; gap: 7px; }

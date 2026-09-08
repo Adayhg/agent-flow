@@ -68,6 +68,17 @@ test('merges session projections without collapsing same-name agents', () => {
   assert.equal(merged.agents.get(officeAgentId('session-b', 'worker'))?.sessionId, 'session-b')
 })
 
+test('keeps the origin metadata needed for a hybrid local and VPS office', () => {
+  const projection = projectOffice([{
+    ...event('agent_spawn', { name: 'local-worker', model: 'gpt-5.6-terra' }),
+    source: 'local', hostId: 'windows-main', runtime: 'codex',
+  }])
+  const worker = projection.agents.get(officeAgentId('session-a', 'local-worker'))
+  assert.equal(worker?.source, 'local')
+  assert.equal(worker?.hostId, 'windows-main')
+  assert.equal(worker?.runtime, 'codex')
+})
+
 test('does not claim a parent until the parent itself is observed', () => {
   const childId = officeAgentId('session-a', 'child')
   const parentId = officeAgentId('session-a', 'parent')

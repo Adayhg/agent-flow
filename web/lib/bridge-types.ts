@@ -11,6 +11,10 @@ export interface AgentEvent {
   type: string
   payload: Record<string, unknown>
   sessionId?: string
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
+  sequence?: number
 }
 
 export interface SessionInfo {
@@ -19,6 +23,9 @@ export interface SessionInfo {
   status: 'active' | 'completed'
   startTime: number
   lastActivityTime: number
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
 }
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'watching'

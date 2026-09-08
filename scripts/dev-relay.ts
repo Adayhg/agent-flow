@@ -29,8 +29,8 @@ async function main() {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
     }
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Agent-Flow-Token')
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204)
@@ -40,6 +40,10 @@ async function main() {
 
     if (req.url === '/events') {
       return relay.handleSSE(req, res)
+    }
+
+    if (req.url === '/ingest' && req.method === 'POST') {
+      return relay.handleIngest(req, res)
     }
 
     if (req.url === '/healthz') {

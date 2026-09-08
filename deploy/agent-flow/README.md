@@ -14,6 +14,9 @@ checkout is only a development/review source; the runtime lives on the VPS.
 - Browser SSE path: `/agent-flow/events`
 - Workspace observed by the relay: `/home/discanary/apps/agent-flow-office`
 - Claude and Codex session data remain on the VPS under the `discanary` account
+- A future local source can submit bounded, authenticated lifecycle events to
+  `/agent-flow/ingest`; this is an optional hook/bridge channel, not a new
+  Windows service. The relay rejects the route until a token is configured.
 
 The relay must run on the same host as the agents. It is not a GitHub Actions
 job and it is not a Windows process.
@@ -71,6 +74,18 @@ The relay needs write access to `/home/discanary/.claude/agent-flow` for Claude
 hook discovery. If that directory cannot be created, stop the release and fix
 the VPS ownership/permissions; do not silently publish an office that cannot
 observe the configured runtime.
+
+To enable the optional ingress, create an environment file owned by `discanary`
+at `/home/discanary/apps/agent-flow-office/.relay.env` with mode `0600` and one
+line:
+
+```text
+AGENT_FLOW_INGEST_TOKEN=<long-random-token>
+```
+
+Keep that value out of GitHub and out of the URL. The local runtime channel,
+when available, sends `Authorization: Bearer <token>` to the public ingest
+location documented below.
 
 ## Nginx Proxy Manager route
 

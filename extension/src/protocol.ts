@@ -26,6 +26,11 @@ export interface AgentEvent {
   type: AgentEventType
   payload: Record<string, unknown>
   sessionId?: string
+  /** Origin metadata used by the hosted multi-machine office. */
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
+  sequence?: number
 }
 
 export interface SessionInfo {
@@ -34,6 +39,9 @@ export interface SessionInfo {
   status: 'active' | 'completed'
   startTime: number
   lastActivityTime: number
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
 }
 
 // ─── Extension → Webview Messages ────────────────────────────────────────────

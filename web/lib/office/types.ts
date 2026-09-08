@@ -36,6 +36,10 @@ export interface OfficeAgent {
   sessionLabel?: string
   /** Source identifier used only to route a selection back to the graph. */
   sourceAgentId?: string
+  /** Where the session was observed. */
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
   /** A short label only. Task text, messages and tool arguments are excluded. */
   name: string
   /** Fixed-vocabulary semantic role, never the original prompt. */
@@ -76,6 +80,9 @@ export interface OfficeEvent {
   type: string
   payload: Record<string, unknown>
   sessionId?: string
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
 }
 
 export interface OfficeProjectionOptions {
@@ -88,6 +95,9 @@ export interface OfficeProjectionOptions {
 /** Existing visualizer graph state adapted without exposing UI implementation details. */
 export interface OfficeGraphSource {
   sessionId?: string
+  source?: OfficeAgent['source']
+  hostId?: string
+  runtime?: OfficeAgent['runtime']
   agents: Iterable<import('../agent-types').Agent>
   edges: Iterable<import('../agent-types').Edge>
 }
