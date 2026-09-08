@@ -350,10 +350,6 @@ export function OfficeView({
           {showStandby && (
             <div className={styles.standbyLayer} aria-label="Agentes preparados en espera">
               {STANDBY_AGENTS.map(standby => <StandbyAgent definition={standby} key={standby.id} />)}
-              <div className={styles.waitingBanner} role="status">
-                <strong>Sala de espera</strong>
-                <span>Agentes preparados para entrar en acción</span>
-              </div>
             </div>
           )}
           {visibleAgents.length === 0 && !showStandby && (

@@ -123,9 +123,6 @@
 .standbyAgent .avatar { animation: office-standby 2.8s ease-in-out infinite; }
 .standbyAgent .avatar::after { background: #bf7b22; animation: office-standby-dot 1.8s ease-in-out infinite; }
 .standbyAgent .stateBadge { border-style: dashed; }
-.waitingBanner { position: absolute; z-index: 7; right: 18px; bottom: 14px; display: grid; gap: 2px; max-width: 210px; padding: 7px 10px; border: 1px solid rgba(191, 123, 34, .3); border-radius: 8px; background: rgba(255, 250, 235, .86); color: #76541f; box-shadow: 0 4px 12px rgba(93, 74, 41, .1); }
-.waitingBanner strong { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
-.waitingBanner span { font-size: 10px; }
 
 .agent {
   --accent: #3c72b7;
