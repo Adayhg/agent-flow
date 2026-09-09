@@ -150,9 +150,27 @@ export function useVSCodeBridge(): BridgeHookResult {
         const previousTouch = lastSessionTouchRef.current.get(event.sessionId) ?? 0
         if (now - previousTouch >= 1_000) {
           lastSessionTouchRef.current.set(event.sessionId, now)
-          setSessions(prev => prev.map(session => session.id === event.sessionId
-            ? { ...session, status: 'active' as const, lastActivityTime: now }
-            : session))
+          setSessions(prev => {
+            const known = prev.some(session => session.id === event.sessionId)
+            if (known) {
+              return prev.map(session => session.id === event.sessionId
+                ? { ...session, status: 'active' as const, lastActivityTime: now, source: event.source ?? session.source, hostId: event.hostId ?? session.hostId, runtime: event.runtime ?? session.runtime }
+                : session)
+            }
+            // A lifecycle message can be lost during a reconnect. The event
+            // itself is enough evidence to add a bounded, non-prompt label.
+            const shortId = event.sessionId!.slice(0, 8) || 'desconocida'
+            return [...prev, {
+              id: event.sessionId!,
+              label: `Sesión ${shortId}`,
+              status: 'active' as const,
+              startTime: now,
+              lastActivityTime: now,
+              source: event.source,
+              hostId: event.hostId,
+              runtime: event.runtime,
+            }]
+          })
         }
       }
 
