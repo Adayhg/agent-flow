@@ -27,6 +27,8 @@ Claude Code is powerful, but its execution is a black box — you see the final 
 - **Timeline & transcript panels**: Review the full execution timeline, file attention heatmap, and message transcript
 - **JSONL log file support**: Point at any JSONL event log to replay or watch agent activity
 - **Office mode (MVP)**: The visualizer opens in a privacy-scoped office view by default; the existing Graph view remains available as a reversible toggle
+- **Office session roster**: Shows every known session, including sessions waiting for their first agent event, with live connection, runtime, origin, freshness, and session-scoped filters
+- **Hybrid source fidelity**: Preserves bounded local/VPS and Claude/Codex metadata through the event bridge so background sessions remain identifiable without exposing prompts or transcripts
 
 ## Office mode (MVP)
 
@@ -50,6 +52,14 @@ Office intentionally exposes only bounded names, model IDs, states, zones, and
 relationship evidence. Prompts, transcript text, file paths, and tool
 arguments are not passed to the Office view. The implementation is local and
 read-only: it does not write to `.codex`.
+
+The Office roster also distinguishes an observed session from a decorative
+standby character. A session card can exist before its first agent event; no
+agent is fabricated for that state. Selecting a session filters the room view
+and synchronizes the Graph session, while the global view keeps all observed
+sessions available. Duplicate relay events with sequence numbers are ignored,
+and unchanged background projections are cached so long-running offices do not
+replay every session on each update.
 
 For the local/demo workflow, use the commands below and open the displayed
 localhost URL. Office is the initial view; select **Graph** to return to the

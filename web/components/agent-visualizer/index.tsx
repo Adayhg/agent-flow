@@ -17,7 +17,7 @@ import { AgentChatPanel } from "./chat-panel"
 import { SessionTranscriptPanel } from "./session-transcript-panel"
 import { OpenFileProvider } from "./tool-content-renderer"
 import { stopPropagationHandlers } from "./shared-ui"
-import { TimelineEvent, TIMING } from "@/lib/agent-types"
+import { TimelineEvent, TIMING, type SimulationEvent } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
 
 import { MOCK_DURATION } from "@/lib/mock-scenario"
@@ -78,13 +78,46 @@ export function AgentVisualizer() {
     officeSessions.map(session => [session.id, session.label]),
   ), [officeSessions])
 
+  const selectedOfficeSession = useMemo(
+    () => officeSessions.find(session => session.id === bridge.selectedSessionId),
+    [bridge.selectedSessionId, officeSessions],
+  )
+
+  // Background sessions are replayed into Office independently of the Graph.
+  // Cache unchanged projections so a busy session does not reprocess every
+  // historical event for every other session on each incoming event.
+  const officeProjectionCacheRef = useRef(new Map<string, {
+    length: number
+    lastEvent?: SimulationEvent
+    projection: ReturnType<typeof projectOffice>
+  }>())
+
   // Office is an aggregate view: it keeps every session visible while the
   // Graph view and its controls remain scoped to the selected session.
   const officeProjection = useMemo(() => {
-    const projections = Array.from(bridge.sessionEvents.values(), events => projectOffice(events))
+    const projections: ReturnType<typeof projectOffice>[] = []
+    const activeSessionIds = new Set<string>()
+    for (const [sessionId, events] of bridge.sessionEvents) {
+      activeSessionIds.add(sessionId)
+      const lastEvent = events[events.length - 1]
+      const cached = officeProjectionCacheRef.current.get(sessionId)
+      if (cached && cached.length === events.length && cached.lastEvent === lastEvent) {
+        projections.push(cached.projection)
+        continue
+      }
+      const projection = projectOffice(events)
+      officeProjectionCacheRef.current.set(sessionId, { length: events.length, lastEvent, projection })
+      projections.push(projection)
+    }
+    for (const sessionId of officeProjectionCacheRef.current.keys()) {
+      if (!activeSessionIds.has(sessionId)) officeProjectionCacheRef.current.delete(sessionId)
+    }
     if (agents.size > 0 || projections.length === 0) {
       projections.push(projectOfficeGraph({
         sessionId: bridge.selectedSessionId ?? undefined,
+        source: selectedOfficeSession?.source,
+        hostId: selectedOfficeSession?.hostId,
+        runtime: selectedOfficeSession?.runtime,
         agents: agents.values(),
         edges,
       }))
@@ -97,7 +130,7 @@ export function AgentVisualizer() {
       return [id, sessionLabel ? { ...agent, sessionLabel } : agent] as const
     }))
     return { ...merged, agents: labelledAgents }
-  }, [agents, bridge.selectedSessionId, bridge.sessionEvents, edges, officeSessionLabels])
+  }, [agents, bridge.selectedSessionId, bridge.sessionEvents, edges, officeSessionLabels, selectedOfficeSession])
 
   // Office selection can jump to another session before selecting its agent in
   // the graph, after the session cache has been restored.
@@ -353,10 +386,14 @@ export function AgentVisualizer() {
         <OfficeView
           ariaLabel="Oficina de agentes"
           className="!absolute !inset-0 rounded-none border-0"
+          connectionStatus={bridge.connectionStatus}
           onClearSelection={selection.clearAgent}
           onSelectAgent={handleOfficeAgentSelect}
+          onSelectSession={bridge.selectSession}
           projection={officeProjection}
+          sessions={officeSessions}
           selectedAgentId={officeSelectedAgentId}
+          selectedSessionId={bridge.selectedSessionId}
         />
       ) : (
         <>

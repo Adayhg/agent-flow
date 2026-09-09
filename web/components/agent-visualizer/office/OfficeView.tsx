@@ -4,8 +4,10 @@ import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react
 import type {
   OfficeAgent,
   OfficeAgentState,
+  OfficeConnectionStatus,
   OfficeEdge,
   OfficeProjection,
+  OfficeSession,
   OfficeZone,
 } from '@/lib/office'
 import { AGENT_WORK_ROLES, agentWorkRoleLabel, modelFamilyLabel, type AgentWorkRole } from '@/lib/agent-role'
@@ -163,9 +165,22 @@ function avatarHue(key: string): number {
   return value
 }
 
+function sessionFreshness(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'sin fecha'
+  const elapsed = Math.max(0, Date.now() - timestamp)
+  if (elapsed < 60_000) return 'ahora'
+  const minutes = Math.floor(elapsed / 60_000)
+  if (minutes < 60) return `hace ${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  return `hace ${hours} h`
+}
+
 type OfficeFilterValue = 'all'
 type StateFilter = OfficeAgentState | OfficeFilterValue
 type RoleFilter = AgentWorkRole | OfficeFilterValue
+type OriginFilter = 'all' | 'local' | 'vps' | 'unknown'
+type RuntimeFilter = 'all' | 'claude' | 'codex' | 'unknown'
+type SessionFilter = 'all' | string
 
 export interface OfficeViewProps {
   /** Privacy-scoped source. This is the preferred Office contract. */
@@ -174,6 +189,10 @@ export interface OfficeViewProps {
   agents?: ReadonlyMap<string, OfficeAgent>
   edges?: readonly OfficeEdge[]
   selectedAgentId?: string | null
+  sessions?: readonly OfficeSession[]
+  selectedSessionId?: string | null
+  onSelectSession?: (sessionId: string) => void
+  connectionStatus?: OfficeConnectionStatus
   onSelectAgent?: (agentId: string) => void
   onClearSelection?: () => void
   className?: string
@@ -190,6 +209,10 @@ export function OfficeView({
   agents: agentMap,
   edges: suppliedEdges,
   selectedAgentId = null,
+  sessions = [],
+  selectedSessionId = null,
+  onSelectSession,
+  connectionStatus = 'disconnected',
   onSelectAgent,
   onClearSelection,
   className,
@@ -197,30 +220,67 @@ export function OfficeView({
 }: OfficeViewProps) {
   const [stateFilter, setStateFilter] = useState<StateFilter>('all')
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
+  const [originFilter, setOriginFilter] = useState<OriginFilter>('all')
+  const [runtimeFilter, setRuntimeFilter] = useState<RuntimeFilter>('all')
+  const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [search, setSearch] = useState('')
   const [zoom, setZoom] = useState(1)
-  const agents = useMemo(() => Array.from((projection?.agents ?? agentMap ?? new Map<string, OfficeAgent>()).values()), [projection, agentMap])
+  const sessionById = useMemo(() => new Map(sessions.map(session => [session.id, session])), [sessions])
+  const agents = useMemo(() => Array.from((projection?.agents ?? agentMap ?? new Map<string, OfficeAgent>()).values()).map(agent => {
+    // Session metadata is safe bounded context and fills older adapters that
+    // emitted an agent before attaching source/runtime to its event.
+    const session = agent.sessionId ? sessionById.get(agent.sessionId) : undefined
+    if (!session) return agent
+    return {
+      ...agent,
+      source: agent.source ?? session.source,
+      hostId: agent.hostId ?? session.hostId,
+      runtime: agent.runtime ?? session.runtime,
+      sessionLabel: agent.sessionLabel ?? session.label,
+    }
+  }), [agentMap, projection, sessionById])
+  const activeSessionFilter = sessionFilter === 'all' || sessionById.has(sessionFilter) ? sessionFilter : 'all'
   const visibleAgents = useMemo(() => {
     const query = search.trim().toLocaleLowerCase()
     return agents.filter(agent => {
+      if (activeSessionFilter !== 'all' && agent.sessionId !== activeSessionFilter) return false
       if (stateFilter !== 'all' && agent.state !== stateFilter) return false
       if (roleFilter !== 'all' && agent.workRole !== roleFilter) return false
+      if (originFilter !== 'all' && (agent.source ?? 'unknown') !== originFilter) return false
+      if (runtimeFilter !== 'all' && (agent.runtime ?? 'unknown') !== runtimeFilter) return false
       if (!query) return true
       return `${agent.name} ${agent.workLabel ?? ''}`.toLocaleLowerCase().includes(query)
     })
-  }, [agents, roleFilter, search, stateFilter])
+  }, [activeSessionFilter, agents, originFilter, roleFilter, runtimeFilter, search, stateFilter])
   const placements = useMemo(() => placeAgents(visibleAgents), [visibleAgents])
   const placementById = useMemo(() => new Map(placements.map(placement => [placement.agent.id, placement])), [placements])
   const sessionCount = useMemo(
-    () => new Set(agents.map(agent => `${agent.source ?? 'unknown'}:${agent.hostId ?? ''}:${agent.sessionId ?? ''}`)).size,
-    [agents],
+    () => sessions.length || new Set(agents.map(agent => agent.sessionId ?? 'default-session')).size,
+    [agents, sessions.length],
   )
   const hierarchy = useMemo(
     () => (projection?.edges ?? suppliedEdges ?? []).filter(edge => placementById.has(edge.parentId) && placementById.has(edge.childId)),
     [projection, suppliedEdges, placementById],
   )
   const selected = selectedAgentId ? placementById.get(selectedAgentId)?.agent ?? null : null
-  const showStandby = agents.length === 0 && !search.trim() && stateFilter === 'all' && roleFilter === 'all'
+  const showStandby = agents.length === 0
+    && !search.trim()
+    && stateFilter === 'all'
+    && roleFilter === 'all'
+    && originFilter === 'all'
+    && runtimeFilter === 'all'
+    && activeSessionFilter === 'all'
+  const sessionWaiting = activeSessionFilter !== 'all'
+    && !agents.some(agent => agent.sessionId === activeSessionFilter)
+    && !search.trim()
+    && stateFilter === 'all'
+    && roleFilter === 'all'
+    && originFilter === 'all'
+    && runtimeFilter === 'all'
+  const recentCompleted = useMemo(
+    () => visibleAgents.filter(agent => agent.state === 'completed').sort((a, b) => b.lastActivityAt - a.lastActivityAt).slice(0, 5),
+    [visibleAgents],
+  )
   const roomCounts = useMemo(() => {
     const counts = new Map<RoomId, number>()
     for (const placement of placements) counts.set(placement.room.id, (counts.get(placement.room.id) ?? 0) + 1)
@@ -254,6 +314,22 @@ export function OfficeView({
     }
   }
 
+  const handleSessionSelect = (sessionId: string) => {
+    setSessionFilter(sessionId)
+    onSelectSession?.(sessionId)
+  }
+
+  const clearFilters = () => {
+    setSearch('')
+    setStateFilter('all')
+    setRoleFilter('all')
+    setOriginFilter('all')
+    setRuntimeFilter('all')
+    setSessionFilter('all')
+  }
+
+  const connectionLabel = connectionStatus === 'watching' ? 'LIVE' : connectionStatus === 'connected' ? 'Conectado' : 'Sin conexión'
+
   return (
     <section className={[styles.office, className].filter(Boolean).join(' ')} aria-label={ariaLabel}>
       <div className={styles.srOnly} aria-live="polite">
@@ -261,12 +337,49 @@ export function OfficeView({
           ? `${visibleName(selected)}: ${STATE_LABELS[selected.state]}`
           : showStandby
             ? 'No hay una sesión activa. Tres agentes preparados aparecen en la sala de espera.'
+            : sessionWaiting
+              ? 'La sesión está visible, pero todavía no se ha observado ningún agente.'
             : `${visibleAgents.length} agentes visibles de ${agents.length}`}
       </div>
 
+      {sessions.length > 0 && (
+        <div className={styles.sessionRoster} aria-label="Sesiones observadas">
+          <button
+            className={`${styles.sessionChip} ${activeSessionFilter === 'all' ? styles.sessionChipSelected : ''}`}
+            onClick={() => setSessionFilter('all')}
+            type="button"
+          >
+            <span className={styles.sessionDot} data-status="active" />
+            <span>Todas</span>
+            <small>{sessions.length}</small>
+          </button>
+          {sessions.map(session => {
+            const isSelected = activeSessionFilter === session.id
+            const isCurrent = selectedSessionId === session.id
+            const isActive = session.status === 'active'
+            return (
+              <button
+                className={`${styles.sessionChip} ${isSelected ? styles.sessionChipSelected : ''} ${isCurrent ? styles.sessionChipCurrent : ''}`}
+                key={session.id}
+                onClick={() => handleSessionSelect(session.id)}
+                type="button"
+                title={`${session.label} · ${isActive ? 'Activa' : 'Completada'} · Última actividad: ${sessionFreshness(session.lastActivityTime)}`}
+              >
+                <span className={styles.sessionDot} data-status={isActive ? 'active' : 'complete'} />
+                <span className={styles.sessionChipLabel}>{session.label}</span>
+                <small>{sessionFreshness(session.lastActivityTime)} · {session.runtime?.toUpperCase() ?? '—'} · {session.source?.toUpperCase() ?? 'ORIGEN?'}</small>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       <div className={styles.officeToolbar} aria-label="Controles de oficina">
         <span className={styles.scopeBadge} aria-label="Ámbito de la oficina">
-          {sessionCount > 1 ? `Todas las sesiones · ${sessionCount}` : 'Vista global'}
+          {activeSessionFilter !== 'all' ? `Sesión · ${sessionById.get(activeSessionFilter)?.label ?? activeSessionFilter.slice(0, 8)}` : sessionCount > 1 ? `Todas las sesiones · ${sessionCount}` : 'Vista global'}
+        </span>
+        <span className={styles.connectionBadge} data-status={connectionStatus} aria-label={`Conexión: ${connectionLabel}`}>
+          <i /> {connectionLabel}
         </span>
         <label className={styles.filterField}>
           <span>Buscar</span>
@@ -277,6 +390,24 @@ export function OfficeView({
             type="search"
             value={search}
           />
+        </label>
+        <label className={styles.filterField}>
+          <span>Origen</span>
+          <select aria-label="Filtrar por origen" onChange={event => setOriginFilter(event.target.value as OriginFilter)} value={originFilter}>
+            <option value="all">Todos</option>
+            <option value="vps">VPS</option>
+            <option value="local">Local</option>
+            <option value="unknown">Desconocido</option>
+          </select>
+        </label>
+        <label className={styles.filterField}>
+          <span>Runtime</span>
+          <select aria-label="Filtrar por runtime" onChange={event => setRuntimeFilter(event.target.value as RuntimeFilter)} value={runtimeFilter}>
+            <option value="all">Todos</option>
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+            <option value="unknown">Desconocido</option>
+          </select>
         </label>
         <label className={styles.filterField}>
           <span>Estado</span>
@@ -298,10 +429,21 @@ export function OfficeView({
           <button aria-label="Acercar" disabled={zoom >= 1.3} onClick={() => setZoom(value => Math.min(1.3, Number((value + .15).toFixed(2))))} type="button">+</button>
           <button aria-label="Restablecer zoom" disabled={zoom === 1} onClick={() => setZoom(1)} type="button">Reset</button>
         </div>
-        {(search || stateFilter !== 'all' || roleFilter !== 'all') && (
-          <button className={styles.clearFilters} onClick={() => { setSearch(''); setStateFilter('all'); setRoleFilter('all') }} type="button">Limpiar</button>
+        {(search || stateFilter !== 'all' || roleFilter !== 'all' || originFilter !== 'all' || runtimeFilter !== 'all' || activeSessionFilter !== 'all') && (
+          <button className={styles.clearFilters} onClick={clearFilters} type="button">Limpiar</button>
         )}
       </div>
+
+      {recentCompleted.length > 0 && (
+        <div className={styles.deliveryStrip} aria-label="Últimas entregas">
+          <span className={styles.deliveryTitle}>Últimas entregas</span>
+          {recentCompleted.map(agent => (
+            <button className={styles.deliveryChip} key={agent.id} onClick={() => onSelectAgent?.(agent.id)} type="button">
+              <i /> {visibleName(agent)}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className={styles.stageViewport}>
         <div className={styles.stage} style={{ '--office-zoom': zoom } as CSSProperties}>
@@ -362,7 +504,13 @@ export function OfficeView({
               {STANDBY_AGENTS.map(standby => <StandbyAgent definition={standby} key={standby.id} />)}
             </div>
           )}
-          {visibleAgents.length === 0 && !showStandby && (
+          {sessionWaiting && (
+            <div className={styles.emptyState} role="status">
+              <strong>Sesión preparada</strong>
+              <span>Todavía no se ha observado ningún agente en esta sesión.</span>
+            </div>
+          )}
+          {visibleAgents.length === 0 && !showStandby && !sessionWaiting && (
             <div className={styles.emptyState} role="status">
               <strong>Ningún agente coincide</strong>
               <span>Cambia o limpia los filtros para volver a ver agentes.</span>
@@ -383,6 +531,8 @@ export function OfficeView({
       <div className={styles.mobileList} aria-label={showStandby ? 'Agentes en espera' : 'Lista de agentes'}>
         {showStandby
           ? STANDBY_AGENTS.map(standby => <StandbyAgent definition={standby} key={standby.id} mobile />)
+          : sessionWaiting
+            ? <div className={styles.mobileWaiting}>Sesión preparada · aún sin agentes observados</div>
           : placements.map(({ agent, room }) => (
             <OfficeAgent
               agent={agent}
@@ -406,7 +556,7 @@ export function OfficeView({
           <span className={styles.zoneLabel}>Zona: {ROOMS.find(room => room.id === roomForAgent(selected))?.label}</span>
           {selected.sessionLabel && <span className={styles.sourceName}>Sesión: {selected.sessionLabel}</span>}
           {selected.source && <span className={styles.sourceName}>Origen: {selected.source.toUpperCase()}{selected.runtime ? ` · ${selected.runtime}` : ''}</span>}
-          {selected.workLabel && selected.name !== selected.workLabel && <span className={styles.sourceName}>Origen: {selected.name}</span>}
+          {selected.workLabel && selected.name !== selected.workLabel && <span className={styles.sourceName}>Nombre técnico: {selected.name}</span>}
           {selected.model && <span className={styles.modelName}>{selected.model}</span>}
           <code className={styles.agentId}>{selected.id}</code>
         </aside>
@@ -493,7 +643,7 @@ function OfficeAgent({ agent, room, isSelected, onSelect, onKeyDown, style }: Of
       <span className={styles.roleBadge}><span aria-hidden="true">{roleMark}</span>{roleLabel}{familyLabel ? ` · ${familyLabel}` : ''}</span>
       <span className={styles.stateBadge}><span aria-hidden="true">{stateMark}</span>{stateLabel}</span>
       {agent.sessionLabel && <span className={styles.sessionBadge}>{agent.sessionLabel}</span>}
-      {agent.source && <span className={styles.sourceBadge}>{agent.source === 'local' ? 'LOCAL' : agent.source.toUpperCase()}</span>}
+      {(agent.source || agent.runtime) && <span className={styles.sourceBadge}>{agent.source === 'local' ? 'LOCAL' : agent.source?.toUpperCase() ?? 'ORIGEN?'}{agent.runtime ? ` · ${agent.runtime.toUpperCase()}` : ''}</span>}
     </button>
   )
 }

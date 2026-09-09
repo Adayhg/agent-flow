@@ -168,6 +168,12 @@ export interface SimulationEvent {
     | 'permission_requested'
   payload: Record<string, unknown>
   sessionId?: string
+  /** Origin metadata is preserved so aggregate Office views can distinguish
+   * local/VPS sessions without exposing transcript or prompt content. */
+  source?: 'local' | 'vps' | 'unknown'
+  hostId?: string
+  runtime?: 'claude' | 'codex' | 'unknown'
+  sequence?: number
 }
 
 export interface DepthParticle {

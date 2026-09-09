@@ -79,6 +79,17 @@ test('keeps the origin metadata needed for a hybrid local and VPS office', () =>
   assert.equal(worker?.runtime, 'codex')
 })
 
+test('hydrates origin metadata when it arrives after the agent was discovered', () => {
+  const projection = projectOffice([
+    event('agent_spawn', { name: 'background-worker' }, 1),
+    { ...event('agent_idle', { name: 'background-worker' }, 2), source: 'vps', hostId: 'office-vps', runtime: 'claude' },
+  ])
+  const worker = projection.agents.get(officeAgentId('session-a', 'background-worker'))
+  assert.equal(worker?.source, 'vps')
+  assert.equal(worker?.hostId, 'office-vps')
+  assert.equal(worker?.runtime, 'claude')
+})
+
 test('does not claim a parent until the parent itself is observed', () => {
   const childId = officeAgentId('session-a', 'child')
   const parentId = officeAgentId('session-a', 'parent')
@@ -185,4 +196,21 @@ test('adapts graph agents and only joins a parent when a parent-child edge exist
 
   const withEdge = projectOfficeGraph({ sessionId: 'graph-session', agents: [parent, child], edges: [edge] })
   assert.equal(withEdge.agents.get(officeAgentId('graph-session', 'child'))?.parentId, officeAgentId('graph-session', 'parent'))
+})
+
+test('maps graph thinking to the planning room and preserves runtime metadata', () => {
+  const thinkingAgent: Agent = {
+    id: 'thinking', name: 'Thinking', state: 'thinking', parentId: null,
+    tokensUsed: 0, tokensMax: 0, contextBreakdown: { systemPrompt: 0, userMessages: 0, toolResults: 0, reasoning: 0, subagentResults: 0 },
+    toolCalls: 0, timeAlive: 0, x: 0, y: 0, vx: 0, vy: 0, pinned: false, isMain: true,
+    runtime: 'codex', spawnTime: 1, opacity: 1, scale: 1, messageBubbles: [],
+  }
+  const projection = projectOfficeGraph({
+    sessionId: 'graph-session', source: 'vps', hostId: 'office-vps', runtime: 'codex',
+    agents: [thinkingAgent], edges: [],
+  })
+  const officeAgent = projection.agents.get(officeAgentId('graph-session', 'thinking'))
+  assert.equal(officeAgent?.state, 'planning')
+  assert.equal(officeAgent?.runtime, 'codex')
+  assert.equal(officeAgent?.source, 'vps')
 })

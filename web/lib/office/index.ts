@@ -8,5 +8,7 @@ export type {
   OfficeGraphSource,
   OfficeProjection,
   OfficeProjectionOptions,
+  OfficeSession,
+  OfficeConnectionStatus,
   OfficeZone,
 } from './types'

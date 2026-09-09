@@ -70,6 +70,21 @@ export interface OfficeProjection {
   edges: readonly OfficeEdge[]
 }
 
+/** Session metadata used by the Office roster. It may exist before the first
+ * agent event, so it must not be represented as a fabricated agent. */
+export interface OfficeSession {
+  id: string
+  label: string
+  status: 'active' | 'completed'
+  startTime: number
+  lastActivityTime: number
+  source?: OfficeAgent['source']
+  hostId?: string
+  runtime?: OfficeAgent['runtime']
+}
+
+export type OfficeConnectionStatus = 'connected' | 'disconnected' | 'watching'
+
 /**
  * A widening of SimulationEvent used at the boundary: a relay can send a
  * future event type before this package has learned about it. Such events are

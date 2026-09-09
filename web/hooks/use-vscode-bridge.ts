@@ -60,6 +60,8 @@ export function useVSCodeBridge(): BridgeHookResult {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const selectedSessionIdRef = useRef<string | null>(null)
   const sessionEventsRef = useRef<Map<string, SimulationEvent[]>>(new Map())
+  const lastSequenceRef = useRef<Map<string, number>>(new Map())
+  const lastSessionTouchRef = useRef<Map<string, number>>(new Map())
   /** True while a session switch is pending (between auto-select and useLayoutEffect).
    *  Prevents the animation frame from processing events in the wrong simulation context. */
   const sessionSwitchPendingRef = useRef(false)
@@ -117,11 +119,23 @@ export function useVSCodeBridge(): BridgeHookResult {
     // selectedSessionIdRef is updated synchronously (not via React state) so it's
     // always current even before React re-renders.
     const unsubEvent = bridge.onEvent((event: AgentEvent) => {
+      // Reconnects can replay the last relay batch. Sequence numbers are
+      // optional for older producers, but when present they make buffering
+      // idempotent and keep the Office projection from doing duplicate work.
+      if (event.sessionId && Number.isFinite(event.sequence)) {
+        const previous = lastSequenceRef.current.get(event.sessionId)
+        if (previous !== undefined && event.sequence! <= previous) return
+        lastSequenceRef.current.set(event.sessionId, event.sequence!)
+      }
       const simEvent: SimulationEvent = {
         time: event.time,
         type: event.type as SimulationEvent['type'],
         payload: event.payload,
         sessionId: event.sessionId,
+        source: event.source,
+        hostId: event.hostId,
+        runtime: event.runtime,
+        sequence: event.sequence,
       }
 
       // Always buffer by session (for replay on session switch)
@@ -129,6 +143,17 @@ export function useVSCodeBridge(): BridgeHookResult {
         const buf = sessionEventsRef.current.get(event.sessionId) || []
         buf.push(simEvent)
         sessionEventsRef.current.set(event.sessionId, buf)
+
+        // Keep the roster's freshness indicator useful without allocating a
+        // new SessionInfo array for every high-frequency tool event.
+        const now = Date.now()
+        const previousTouch = lastSessionTouchRef.current.get(event.sessionId) ?? 0
+        if (now - previousTouch >= 1_000) {
+          lastSessionTouchRef.current.set(event.sessionId, now)
+          setSessions(prev => prev.map(session => session.id === event.sessionId
+            ? { ...session, status: 'active' as const, lastActivityTime: now }
+            : session))
+        }
       }
 
       // Aggregate Office projections need to refresh for background sessions as
@@ -185,6 +210,8 @@ export function useVSCodeBridge(): BridgeHookResult {
         selectedSessionIdRef.current = null
         pendingEventsRef.current.length = 0
         sessionEventsRef.current.clear()
+        lastSequenceRef.current.clear()
+        lastSessionTouchRef.current.clear()
         setSessionsWithActivity(new Set())
         dismissedSessionsRef.current.clear()
         setEventVersion(v => v + 1)

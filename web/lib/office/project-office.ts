@@ -113,6 +113,27 @@ function replaceAgent(state: MutableOfficeState, agent: OfficeAgent, changes: Pa
   return next
 }
 
+function recordOrigin(
+  state: MutableOfficeState,
+  sessionId: string,
+  origin: { source?: OfficeAgent['source']; hostId?: string; runtime?: OfficeAgent['runtime'] },
+): void {
+  const previous = state.origins.get(sessionId)
+  const next = {
+    source: origin.source ?? previous?.source,
+    hostId: origin.hostId ?? previous?.hostId,
+    runtime: origin.runtime ?? previous?.runtime,
+  }
+  state.origins.set(sessionId, next)
+
+  // A relay may attach origin metadata to the first non-spawn event. Hydrate
+  // agents already discovered in that session so background sessions remain
+  // identifiable in the aggregate Office view too.
+  for (const agent of state.agents.values()) {
+    if (agent.sessionId === sessionId) replaceAgent(state, agent, next)
+  }
+}
+
 function resolveKnownParent(state: MutableOfficeState, childId: string): void {
   const relation = state.parentEvidence.get(childId)
   const child = state.agents.get(childId)
@@ -186,7 +207,7 @@ function applyEvent(state: MutableOfficeState, event: OfficeEvent): void {
   const at = eventTime(event)
   const payload = event.payload || {}
   if (event.source || event.hostId || event.runtime) {
-    state.origins.set(sessionId, {
+    recordOrigin(state, sessionId, {
       source: event.source,
       hostId: event.hostId,
       runtime: event.runtime,
@@ -347,9 +368,9 @@ function stateFromGraphAgent(agent: Agent): OfficeAgentState {
     case 'error': return 'blocked'
     case 'waiting_permission': return 'waiting_approval'
     case 'idle': return 'idle'
-    // The graph's "thinking" and "paused" labels do not provide enough
-    // evidence to choose an Office work zone.
-    case 'thinking':
+    // Thinking is direct evidence of planning. Paused has no safe room beyond
+    // the neutral waiting area until a new event identifies the next action.
+    case 'thinking': return 'planning'
     case 'paused': return 'unknown'
   }
 }
@@ -365,6 +386,7 @@ function applyGraphAgent(state: MutableOfficeState, sessionId: string, source: A
     zone: stateFromGraphAgent(source),
     lastActivityAt: at,
   }
+  if (source.runtime) changes.runtime = source.runtime
   const workRole = source.workRole || inferAgentWorkRole(source.task, source.name, source.currentTool, source.model)
   changes.workRole = workRole
   changes.workLabel = formatAgentWorkLabel(workRole, source.model)
